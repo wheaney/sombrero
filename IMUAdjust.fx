@@ -1,15 +1,18 @@
 // ReShade shader to translate, rotate, zoom, and crop an image
 #include "ReShade.fxh"
 
-uniform float3 g_imu_position < source = "imu_euler"; defaultValue={0.0, 0.0, 0.0}; >;
-uniform float3 g_imu_velocity < source = "imu_velocity"; defaultValue={0.0, 0.0, 0.0}; >;
-uniform float3 g_imu_accel < source = "imu_accel"; defaultValue={0.0, 0.0, 0.0}; >;
+uniform float3x3 g_imu_data < source = "imu_data"; defaultValue=float3x3(
+//  yaw,    pitch,  roll
+    0.0,    0.0,    0.0, // positions
+    0.0,    0.0,    0.0, // velocities
+    0.0,    0.0,    0.0  // accelerations
+); >;
 uniform float2 g_look_ahead < source = "look_ahead_cfg"; defaultValue=float2(15.0f, 2.4f); >;
 uniform uint2 g_display_res < source = "display_res"; defaultValue=uint2(1920u, 1080u); >; // width, height
-uniform float g_display_fov < source = "display_fov"; defaultValue=39.5; >;
+uniform float g_display_fov < source = "display_fov"; defaultValue=40.1; >;
 uniform float g_zoom < source = "zoom"; defaultValue=1.0; >;
 uniform bool g_disabled < source = "disabled"; defaultValue=true; >;
-uniform float g_frametime < source = "frametime"; >;
+uniform float g_frametime < source = "averageframetime"; >;
 
 float degreesLookAhead(float gyro_position, float gyro_velocity, float gyro_accel, float t, float t_squared) {
     return gyro_position + gyro_velocity * t + 0.5 * gyro_accel * t_squared;
@@ -25,9 +28,9 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
     float look_ahead_sec = (g_look_ahead.x + g_frametime * g_look_ahead.y) / 1000.0;
     float look_ahead_sec_squared = look_ahead_sec * look_ahead_sec;
     float3 g_imu_euler = float3(
-        degreesLookAhead(g_imu_position.x, g_imu_velocity.x, g_imu_accel.x, look_ahead_sec, look_ahead_sec_squared),
-        degreesLookAhead(g_imu_position.y, g_imu_velocity.y, g_imu_accel.y, look_ahead_sec, look_ahead_sec_squared),
-        degreesLookAhead(g_imu_position.z, g_imu_velocity.z, g_imu_accel.z, look_ahead_sec, look_ahead_sec_squared)
+        degreesLookAhead(g_imu_data[0][0], g_imu_data[1][0], g_imu_data[2][0], look_ahead_sec, look_ahead_sec_squared),
+        degreesLookAhead(g_imu_data[0][1], g_imu_data[1][1], g_imu_data[2][1], look_ahead_sec, look_ahead_sec_squared),
+        degreesLookAhead(g_imu_data[0][2], g_imu_data[1][2], g_imu_data[2][2], look_ahead_sec, look_ahead_sec_squared)
     );
 
     // Calculate the center of the image
