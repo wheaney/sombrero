@@ -7,7 +7,7 @@ uniform float3x3 g_imu_data < source = "imu_data"; defaultValue=float3x3(
     0.0,    0.0,    0.0, // velocities
     0.0,    0.0,    0.0  // accelerations
 ); >;
-uniform float2 g_look_ahead < source = "look_ahead_cfg"; defaultValue=float2(15.0f, 2.4f); >;
+uniform float2 g_look_ahead < source = "look_ahead_cfg"; defaultValue=float2(-5.0f, 2.4f); >;
 uniform uint2 g_display_res < source = "display_res"; defaultValue=uint2(1920u, 1080u); >; // width, height
 uniform float g_display_fov < source = "display_fov"; defaultValue=40.1; >;
 uniform float g_zoom < source = "zoom"; defaultValue=1.0; >;
