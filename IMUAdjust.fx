@@ -7,12 +7,15 @@ uniform float3x3 g_imu_data < source = "imu_data"; defaultValue=float3x3(
     0.0,    0.0,    0.0, // velocities
     0.0,    0.0,    0.0  // accelerations
 ); >;
-uniform float2 g_look_ahead < source = "look_ahead_cfg"; defaultValue=float2(-5.0f, 2.4f); >;
+uniform float2 g_look_ahead < source = "look_ahead_cfg"; defaultValue=float2(-10.0f, 2.6f); >;
 uniform uint2 g_display_res < source = "display_res"; defaultValue=uint2(1920u, 1080u); >; // width, height
 uniform float g_display_fov < source = "display_fov"; defaultValue=40.1; >;
 uniform float g_zoom < source = "zoom"; defaultValue=1.0; >;
 uniform bool g_disabled < source = "disabled"; defaultValue=true; >;
 uniform float g_frametime < source = "averageframetime"; >;
+
+// cap at 60 ms look-ahead, beyond this it may get jittery and unusable
+#define LOOK_AHEAD_MS_CAP 60.0
 
 float degreesLookAhead(float gyro_position, float gyro_velocity, float gyro_accel, float t, float t_squared) {
     return gyro_position + gyro_velocity * t + 0.5 * gyro_accel * t_squared;
@@ -25,7 +28,8 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         return;
     }
 
-    float look_ahead_sec = (g_look_ahead.x + g_frametime * g_look_ahead.y) / 1000.0;
+    float look_ahead_ms = g_look_ahead.x + g_frametime * g_look_ahead.y;
+    float look_ahead_sec = (look_ahead_ms > LOOK_AHEAD_MS_CAP ? LOOK_AHEAD_MS_CAP : look_ahead_ms) / 1000.0;
     float look_ahead_sec_squared = look_ahead_sec * look_ahead_sec;
     float3 g_imu_euler = float3(
         degreesLookAhead(g_imu_data[0][0], g_imu_data[1][0], g_imu_data[2][0], look_ahead_sec, look_ahead_sec_squared),
