@@ -9,7 +9,7 @@ uniform float4x4 g_imu_quat_data < source = "imu_quat_data"; defaultValue=float4
     0.0,    0.0,    0.0,    0.0  // screen-center/frame-of-reference
 ); >;
 uniform float g_imu_data_period_ms < source = "imu_data_period_ms"; defaultValue=3.0; >;
-uniform float2 g_look_ahead < source = "look_ahead_cfg"; defaultValue=float2(-10f, 2.6f); >;
+uniform float2 g_look_ahead < source = "look_ahead_cfg"; defaultValue=float2(0.0f, 2.4f); >;
 uniform uint2 g_display_res < source = "display_res"; defaultValue=uint2(1920u, 1080u); >; // width, height
 uniform float g_display_fov < source = "display_fov"; defaultValue=46.0; >;
 uniform float g_zoom < source = "zoom"; defaultValue=1.0; >;
