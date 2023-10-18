@@ -23,8 +23,6 @@ uniform float g_lens_distance_ratio < source = "lens_distance_ratio"; defaultVal
 // cap look-ahead, beyond this it may get jittery and unusable
 #define LOOK_AHEAD_MS_CAP 45.0
 
-#define MS_PER_SEC 1000.0
-
 // attempt to figure out where the current position should be based on previous position, velocity, and acceleration.
 // velocity, accel, and time values should all use the same time units (secs, ms, etc...)
 float3 applyLookAhead(float3 position, float3 velocity, float3 accel, float t, float t_squared) {
@@ -63,13 +61,14 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         float diag_to_vert_ratio = sqrt(pow(aspect_ratio, 2) + 1);
         float vertical_fov_rads = radians(g_display_fov / diag_to_vert_ratio);
         float vertical_fov_vector_ratio = sin(vertical_fov_rads/2);
-        float horizontal_fov_vector_ratio = sin(vertical_fov_rads * aspect_ratio/2);
+        float horizontal_fov_rads = vertical_fov_rads * aspect_ratio;
+        float horizontal_fov_vector_ratio = sin(horizontal_fov_rads/2);
 
         // Convert texcoord coordinates into a vector, where the screen's center (texcoord {0.5,0.5}) is at (0,0,1).
         // The screen appears flat across a curved field-of-view, so keeping z fixed at 1 correctly yields vectors
         // that range in magnitude from a min value 1 at the center to max values at the corners of the screen.
         float vec_x = (0.5-texcoord.x) * 2 * horizontal_fov_vector_ratio;
-        float vec_y = (0.5-texcoord.y) * 2 * vertical_fov_vector_ratio;
+        float vec_y = (texcoord.y-0.5) * 2 * vertical_fov_vector_ratio;
         float vec_z = 1.0;
         float3 texcoord_vector = float3(vec_x, vec_y, vec_z);
 
@@ -102,7 +101,7 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
 
         // convert vector back to texcoord (just inverse operations of the first conversion above)
         texcoord.x = 0.5 - (0.5 * res.x / horizontal_fov_vector_ratio);
-        texcoord.y = 0.5 - (0.5 * res.y / vertical_fov_vector_ratio);
+        texcoord.y = (0.5 * res.y / vertical_fov_vector_ratio) + 0.5;
 
         float2 center = float2(0.5f, 0.5f);
         texcoord -= center;
