@@ -65,7 +65,7 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
     if (g_disabled || is_imu_reset_state) {
         float2 banner_size = float2(800.0 / g_display_res.x, 200.0 / g_display_res.y); // Assuming ScreenWidth and ScreenHeight are defined
 
-        if (is_imu_reset_state &&
+        if (!g_disabled &&
             texcoord.x >= banner_position.x - banner_size.x / 2 &&
             texcoord.x <= banner_position.x + banner_size.x / 2 &&
             texcoord.y >= banner_position.y - banner_size.y / 2 &&
