@@ -1,6 +1,15 @@
 // ReShade shader to translate, rotate, zoom, and crop an image
 #include "ReShade.fxh"
 
+texture2D calibratingImage < source = "calibrating.png"; > {
+    Width = 800;
+    Height = 200;
+};
+sampler2D calibratingSampler {
+	Texture = calibratingImage;
+};
+uniform float2 banner_position = float2(0.5, 0.9);
+
 uniform float4x4 g_imu_quat_data < source = "imu_quat_data"; defaultValue=float4x4(
 //  w,      x,      y,      z,
     0.0,    0.0,    0.0,    0.0, // snapshot at t0
@@ -15,10 +24,8 @@ uniform float g_display_fov < source = "display_fov"; defaultValue=46.0; >;
 uniform float g_zoom < source = "zoom"; defaultValue=1.0; >;
 uniform bool g_disabled < source = "disabled"; defaultValue=true; >;
 uniform float g_frametime < source = "averageframetime"; >;
-
-// how much do the lenses swivel in relation to the perceived screen distance
-// computed about 6 inches of radius vs about 12 ft of screen distance
 uniform float g_lens_distance_ratio < source = "lens_distance_ratio"; defaultValue=0.04; >;
+uniform float4 imu_reset_data = float4(0, 0, 0, 1);
 
 // cap look-ahead, beyond this it may get jittery and unusable
 #define LOOK_AHEAD_MS_CAP 45.0
@@ -54,8 +61,21 @@ float3 rate_of_change(float3 v1, float3 v2, float delta_time) {
 
 void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out float4 color : SV_Target)
 {
-    if (g_disabled) {
-        color = tex2D(ReShade::BackBuffer, texcoord);
+    bool is_imu_reset_state = all(g_imu_quat_data[0] == imu_reset_data) && all(g_imu_quat_data[1] == imu_reset_data);
+    if (g_disabled || is_imu_reset_state) {
+        float2 banner_size = float2(800.0 / g_display_res.x, 200.0 / g_display_res.y); // Assuming ScreenWidth and ScreenHeight are defined
+
+        if (is_imu_reset_state &&
+            texcoord.x >= banner_position.x - banner_size.x / 2 &&
+            texcoord.x <= banner_position.x + banner_size.x / 2 &&
+            texcoord.y >= banner_position.y - banner_size.y / 2 &&
+            texcoord.y <= banner_position.y + banner_size.y / 2)
+        {
+            float2 banner_texcoord = (texcoord - (banner_position - banner_size / 2)) / banner_size;
+            color = tex2D(calibratingSampler, banner_texcoord);
+        } else {
+            color = tex2D(ReShade::BackBuffer, texcoord);
+        }
     } else {
         float aspect_ratio = ReShade::ScreenSize.x / ReShade::ScreenSize.y;
         float diag_to_vert_ratio = sqrt(pow(aspect_ratio, 2) + 1);
