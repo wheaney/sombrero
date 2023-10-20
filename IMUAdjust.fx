@@ -26,6 +26,10 @@ uniform bool g_disabled < source = "disabled"; defaultValue=true; >;
 uniform float g_frametime < source = "averageframetime"; >;
 uniform float g_lens_distance_ratio < source = "lens_distance_ratio"; defaultValue=0.04; >;
 uniform float4 imu_reset_data = float4(0, 0, 0, 1);
+uniform float4 g_date < source = "date"; >;
+uniform float4 g_keepalive_date < source = "keepalive_date"; >;
+
+uniform uint day_in_seconds = 24 * 60 * 60;
 
 // cap look-ahead, beyond this it may get jittery and unusable
 #define LOOK_AHEAD_MS_CAP 45.0
@@ -59,13 +63,20 @@ float3 rate_of_change(float3 v1, float3 v2, float delta_time) {
     return (v1-v2) / delta_time;
 }
 
+// super naive check, just make sure the times are within 5 seconds of each other, ignore year, month, day
+bool is_keepalive_recent(float4 currentDate, float4 keepAliveDate)
+{
+    return abs((currentDate.w + day_in_seconds - keepAliveDate.w) % day_in_seconds) <= 5.0;
+}
+
 void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out float4 color : SV_Target)
 {
     bool is_imu_reset_state = all(g_imu_quat_data[0] == imu_reset_data) && all(g_imu_quat_data[1] == imu_reset_data);
-    if (g_disabled || is_imu_reset_state) {
+    bool is_keepalive_valid = is_keepalive_recent(g_date, g_keepalive_date);
+    if (g_disabled || is_imu_reset_state || !is_keepalive_valid) {
         float2 banner_size = float2(800.0 / g_display_res.x, 200.0 / g_display_res.y); // Assuming ScreenWidth and ScreenHeight are defined
 
-        if (!g_disabled &&
+        if (!g_disabled && is_keepalive_valid &&
             texcoord.x >= banner_position.x - banner_size.x / 2 &&
             texcoord.x <= banner_position.x + banner_size.x / 2 &&
             texcoord.y >= banner_position.y - banner_size.y / 2 &&
@@ -104,9 +115,14 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         // and then the acceleration (units/ms^2) as the change in velocities
         float3 accel_t0 = rate_of_change(velocity_t0, velocity_t1, g_imu_data_period_ms);
 
-        // apply most recent velocity and acceleration to most recent position to get a predicted position
-        float look_ahead_ms = min(g_look_ahead.x + g_frametime * g_look_ahead.y, LOOK_AHEAD_MS_CAP);
+        // the bottom of the screen seems to refresh later than the top, need a bigger look-ahead as y approaches 1
+        // TODO - move this to a runtime uniform value provided by the driver since it will vary by device
+        float look_ahead_scanline_adjust = texcoord.y * 5;
+
+        float look_ahead_ms = min(g_look_ahead.x + g_frametime * g_look_ahead.y, LOOK_AHEAD_MS_CAP) + look_ahead_scanline_adjust;
         float look_ahead_ms_squared = pow(look_ahead_ms, 2);
+
+        // apply most recent velocity and acceleration to most recent position to get a predicted position
         float3 look_ahead_vector = applyLookAhead(rotated_vector_t0, velocity_t0, accel_t0, look_ahead_ms, look_ahead_ms_squared);
 
         // rotate it to the frame-of-reference, using its conjugate
