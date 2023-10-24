@@ -32,7 +32,7 @@ uniform float4 g_keepalive_date < source = "keepalive_date"; >;
 uniform uint day_in_seconds = 24 * 60 * 60;
 
 // cap look-ahead, beyond this it may get jittery and unusable
-#define LOOK_AHEAD_MS_CAP 45.0
+#define LOOK_AHEAD_MS_CAP 35.0
 
 // attempt to figure out where the current position should be based on previous position, velocity, and acceleration.
 // velocity, accel, and time values should all use the same time units (secs, ms, etc...)
