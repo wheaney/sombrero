@@ -18,7 +18,7 @@ uniform float4x4 g_imu_quat_data < source = "imu_quat_data"; defaultValue=float4
     0.0,    0.0,    0.0,    0.0  // screen-center/frame-of-reference
 ); >;
 uniform float g_imu_data_period_ms < source = "imu_data_period_ms"; defaultValue=3.0; >;
-uniform float2 g_look_ahead < source = "look_ahead_cfg"; defaultValue=float2(10.0f, 1.5f); >;
+uniform float2 g_look_ahead < source = "look_ahead_cfg"; defaultValue=float2(10.0f, 1.25f); >;
 uniform uint2 g_display_res < source = "display_res"; defaultValue=uint2(1920u, 1080u); >; // width, height
 uniform float g_display_fov < source = "display_fov"; defaultValue=46.0; >;
 uniform float g_zoom < source = "zoom"; defaultValue=1.0; >;
@@ -32,7 +32,7 @@ uniform float4 g_keepalive_date < source = "keepalive_date"; >;
 uniform uint day_in_seconds = 24 * 60 * 60;
 
 // cap look-ahead, beyond this it may get jittery and unusable
-#define LOOK_AHEAD_MS_CAP 35.0
+#define LOOK_AHEAD_MS_CAP 30.0
 
 // attempt to figure out where the current position should be based on previous position, velocity, and acceleration.
 // velocity, accel, and time values should all use the same time units (secs, ms, etc...)
