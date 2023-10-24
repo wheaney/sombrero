@@ -18,13 +18,13 @@ uniform float4x4 g_imu_quat_data < source = "imu_quat_data"; defaultValue=float4
     0.0,    0.0,    0.0,    0.0  // screen-center/frame-of-reference
 ); >;
 uniform float g_imu_data_period_ms < source = "imu_data_period_ms"; defaultValue=3.0; >;
-uniform float2 g_look_ahead < source = "look_ahead_cfg"; defaultValue=float2(0.0f, 2.4f); >;
+uniform float2 g_look_ahead < source = "look_ahead_cfg"; defaultValue=float2(10.0f, 1.5f); >;
 uniform uint2 g_display_res < source = "display_res"; defaultValue=uint2(1920u, 1080u); >; // width, height
 uniform float g_display_fov < source = "display_fov"; defaultValue=46.0; >;
 uniform float g_zoom < source = "zoom"; defaultValue=1.0; >;
 uniform bool g_disabled < source = "disabled"; defaultValue=true; >;
 uniform float g_frametime < source = "averageframetime"; >;
-uniform float g_lens_distance_ratio < source = "lens_distance_ratio"; defaultValue=0.04; >;
+uniform float g_lens_distance_ratio < source = "lens_distance_ratio"; defaultValue=0.08; >;
 uniform float4 imu_reset_data = float4(0, 0, 0, 1);
 uniform float4 g_date < source = "date"; >;
 uniform float4 g_keepalive_date < source = "keepalive_date"; >;
@@ -102,11 +102,13 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         float vec_y = (texcoord.y-0.5) * 2 * vertical_fov_vector_ratio;
         float vec_z = 1.0;
         float3 texcoord_vector = float3(vec_x, vec_y, vec_z);
+        float3 lens_vector = float3(0, 0, g_lens_distance_ratio);
 
         // then rotate the vector using each of the snapshots provided
         float3 rotated_vector_t0 = applyQuaternionToVector(g_imu_quat_data[0], texcoord_vector);
         float3 rotated_vector_t1 = applyQuaternionToVector(g_imu_quat_data[1], texcoord_vector);
         float3 rotated_vector_t2 = applyQuaternionToVector(g_imu_quat_data[2], texcoord_vector);
+        float3 rotated_lens_vector = applyQuaternionToVector(g_imu_quat_data[0], lens_vector);
 
         // compute the two velocities (units/ms) as change in the 3 rotation snapshots
         float3 velocity_t0 = rate_of_change(rotated_vector_t0, rotated_vector_t1, g_imu_data_period_ms);
@@ -124,20 +126,24 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
 
         // apply most recent velocity and acceleration to most recent position to get a predicted position
         float3 look_ahead_vector = applyLookAhead(rotated_vector_t0, velocity_t0, accel_t0, look_ahead_ms, look_ahead_ms_squared);
+        float3 look_ahead_lens_vector = applyLookAhead(rotated_lens_vector, velocity_t0, accel_t0, look_ahead_ms, look_ahead_ms_squared);
 
         // rotate it to the frame-of-reference, using its conjugate
         float3 res = applyQuaternionToVector(quatConj(g_imu_quat_data[3]), look_ahead_vector);
+        float3 res_lens = applyQuaternionToVector(quatConj(g_imu_quat_data[3]), look_ahead_lens_vector);
 
         // adjust its new magnitude so it's pointing to a coordinate on the screen, since the screen is at a z-coordinate
         // of 1.0, we do this by just scaling each component by 1/z
+        bool looking_behind = res.z < 0;
         res /= res.z;
-
-        // add the amount the lenses moved (as a percentage of the unit vector)
-        res *= 1 + g_lens_distance_ratio/length(res);
 
         // convert vector back to texcoord (just inverse operations of the first conversion above)
         texcoord.x = 0.5 - (0.5 * res.x / horizontal_fov_vector_ratio);
         texcoord.y = (0.5 * res.y / vertical_fov_vector_ratio) + 0.5;
+
+        // add the amount the lenses moved
+        texcoord.x -= res_lens.x;
+        texcoord.y += res_lens.y;
 
         float2 center = float2(0.5f, 0.5f);
         texcoord -= center;
@@ -145,7 +151,7 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         texcoord += center;
 
         // Get the original pixel color or black if outside original image
-        if (texcoord.x < 0 || texcoord.y < 0 || texcoord.x > 1 || texcoord.y > 1 || texcoord.x <= 0.005 && texcoord.y <= 0.005 || texcoord.x > g_display_res.x / ReShade::ScreenSize.x || texcoord.y > g_display_res.y / ReShade::ScreenSize.y)
+        if (looking_behind || texcoord.x < 0 || texcoord.y < 0 || texcoord.x > 1 || texcoord.y > 1 || texcoord.x <= 0.005 && texcoord.y <= 0.005 || texcoord.x > g_display_res.x / ReShade::ScreenSize.x || texcoord.y > g_display_res.y / ReShade::ScreenSize.y)
             color = float4(0, 0, 0, 1);
         else
             color = tex2D(ReShade::BackBuffer, texcoord);
