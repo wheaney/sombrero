@@ -17,19 +17,21 @@ uniform float4x4 g_imu_quat_data < source = "imu_quat_data"; defaultValue=float4
     0.0,    0.0,    0.0,    0.0, // snapshot at t2 (for velocity 2, accel 1)
     0.0,    0.0,    0.0,    0.0  // screen-center/frame-of-reference
 ); >;
-uniform float g_imu_data_period_ms < source = "imu_data_period_ms"; defaultValue=3.0; >;
+uniform float g_imu_data_period_ms < source = "imu_data_period_ms"; defaultValue=10.0; >;
 uniform float2 g_look_ahead < source = "look_ahead_cfg"; defaultValue=float2(10.0f, 1.25f); >;
 uniform uint2 g_display_res < source = "display_res"; defaultValue=uint2(1920u, 1080u); >; // width, height
 uniform float g_display_fov < source = "display_fov"; defaultValue=46.0; >;
 uniform float g_zoom < source = "zoom"; defaultValue=1.0; >;
 uniform bool g_disabled < source = "disabled"; defaultValue=true; >;
 uniform float g_frametime < source = "averageframetime"; >;
-uniform float g_lens_distance_ratio < source = "lens_distance_ratio"; defaultValue=0.08; >;
+uniform float g_lens_distance_ratio < source = "lens_distance_ratio"; defaultValue=0.035; >;
 uniform float4 imu_reset_data = float4(0, 0, 0, 1);
 uniform float4 g_date < source = "date"; >;
 uniform float4 g_keepalive_date < source = "keepalive_date"; >;
+uniform bool g_sbs_enabled < source = "sbs_enabled"; defaultValue=false; >;
 
 uniform uint day_in_seconds = 24 * 60 * 60;
+uniform float2 texcoord_center = float2(0.5f, 0.5f);
 
 // cap look-ahead, beyond this it may get jittery and unusable
 #define LOOK_AHEAD_MS_CAP 30.0
@@ -74,7 +76,7 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
     bool is_imu_reset_state = all(g_imu_quat_data[0] == imu_reset_data) && all(g_imu_quat_data[1] == imu_reset_data);
     bool is_keepalive_valid = is_keepalive_recent(g_date, g_keepalive_date);
     if (g_disabled || is_imu_reset_state || !is_keepalive_valid) {
-        float2 banner_size = float2(800.0 / g_display_res.x, 200.0 / g_display_res.y); // Assuming ScreenWidth and ScreenHeight are defined
+        float2 banner_size = float2(800.0 / ReShade::ScreenSize.x, 200.0 / ReShade::ScreenSize.y); // Assuming ScreenWidth and ScreenHeight are defined
 
         if (!g_disabled && is_keepalive_valid &&
             texcoord.x >= banner_position.x - banner_size.x / 2 &&
@@ -88,21 +90,46 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
             color = tex2D(ReShade::BackBuffer, texcoord);
         }
     } else {
-        float aspect_ratio = ReShade::ScreenSize.x / ReShade::ScreenSize.y;
-        float diag_to_vert_ratio = sqrt(pow(aspect_ratio, 2) + 1);
-        float vertical_fov_rads = radians(g_display_fov / diag_to_vert_ratio);
-        float vertical_fov_vector_ratio = sin(vertical_fov_rads/2);
-        float horizontal_fov_rads = vertical_fov_rads * aspect_ratio;
-        float horizontal_fov_vector_ratio = sin(horizontal_fov_rads/2);
+        // These variables are sort of overkill for now, but are broken out for future SBS support
+        float texcoord_x_min = 0.0;
+        float texcoord_x_max = 1.0;
+        float2 screen_size = float2(ReShade::ScreenSize.x, ReShade::ScreenSize.y);
+        float lens_x_offset = 0.0;
+        float lens_y_offset = 0.0;
+        if (g_sbs_enabled) {
+            // TODO - SBS support, modify the above variables based on left/right lens properties
+        }
+
+        float screen_aspect_ratio = screen_size.x / screen_size.y;
+        float native_aspect_ratio = g_display_res.x / g_display_res.y;
+
+        // TODO - fov is based on native aspect ratio, but that produces odd results due to how images at other aspect
+        //        ratios are scaled, so for now, just use the aspect ratio of the original image
+        float diag_to_vert_ratio = sqrt(pow(screen_aspect_ratio, 2) + 1);
+        float half_fov_y_rads = radians(g_display_fov / diag_to_vert_ratio)/2;
+        float half_fov_x_rads = half_fov_y_rads * screen_aspect_ratio;
+
+        float screen_distance = 1.0 - g_lens_distance_ratio;
+
+        float lens_fov_y_offset_rads = atan(lens_y_offset/screen_distance);
+        float fov_y_pos = tan(half_fov_y_rads - lens_fov_y_offset_rads) * screen_distance;
+        float fov_y_neg = -tan(half_fov_y_rads + lens_fov_y_offset_rads) * screen_distance;
+        float fov_y_width = fov_y_pos - fov_y_neg;
+
+        float lens_fov_x_offset_rads = atan(lens_x_offset/screen_distance);
+        float fov_x_pos = tan(half_fov_x_rads - lens_fov_x_offset_rads) * screen_distance;
+        float fov_x_neg = -tan(half_fov_x_rads + lens_fov_x_offset_rads) * screen_distance;
+        float fov_x_width = fov_x_pos - fov_x_neg;
 
         // Convert texcoord coordinates into a vector, where the screen's center (texcoord {0.5,0.5}) is at (0,0,1).
         // The screen appears flat across a curved field-of-view, so keeping z fixed at 1 correctly yields vectors
         // that range in magnitude from a min value 1 at the center to max values at the corners of the screen.
-        float vec_x = (0.5-texcoord.x) * 2 * horizontal_fov_vector_ratio;
-        float vec_y = (texcoord.y-0.5) * 2 * vertical_fov_vector_ratio;
-        float vec_z = 1.0;
+        // TODO - typically texcoord (0,0) is the bottom-left corner, this is treating it as bottom-right? need to flip sign of texcoord.x to compute vec_x
+        float vec_x = -texcoord.x * fov_x_width + fov_x_pos;
+        float vec_y = texcoord.y * fov_y_width + fov_y_neg;
+        float vec_z = screen_distance;
         float3 texcoord_vector = float3(vec_x, vec_y, vec_z);
-        float3 lens_vector = float3(0, 0, g_lens_distance_ratio);
+        float3 lens_vector = float3(lens_x_offset, 0, g_lens_distance_ratio);
 
         // then rotate the vector using each of the snapshots provided
         float3 rotated_vector_t0 = applyQuaternionToVector(g_imu_quat_data[0], texcoord_vector);
@@ -131,27 +158,27 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         // rotate it to the frame-of-reference, using its conjugate
         float3 res = applyQuaternionToVector(quatConj(g_imu_quat_data[3]), look_ahead_vector);
         float3 res_lens = applyQuaternionToVector(quatConj(g_imu_quat_data[3]), look_ahead_lens_vector);
-
-        // adjust its new magnitude so it's pointing to a coordinate on the screen, since the screen is at a z-coordinate
-        // of 1.0, we do this by just scaling each component by 1/z
         bool looking_behind = res.z < 0;
-        res /= res.z;
 
-        // convert vector back to texcoord (just inverse operations of the first conversion above)
-        texcoord.x = 0.5 - (0.5 * res.x / horizontal_fov_vector_ratio);
-        texcoord.y = (0.5 * res.y / vertical_fov_vector_ratio) + 0.5;
+        // divide all values by z to scale the magnitude so z is exactly 1, and multiply by the final display distance
+        // so the vector is pointing at a coordinate on the screen
+        float display_distance = 1.0 - res_lens.z;
+        res *= display_distance/res.z;
 
-        // add the amount the lenses moved
-        texcoord.x -= res_lens.x;
-        texcoord.y += res_lens.y;
+        // adjust x and y by how much our lens moved from its original offset
+        res += res_lens - lens_vector;
 
-        float2 center = float2(0.5f, 0.5f);
-        texcoord -= center;
-        texcoord = texcoord / float2(g_zoom * ReShade::ScreenSize.x / g_display_res.x, g_zoom * ReShade::ScreenSize.y / g_display_res.y);
-        texcoord += center;
+        // deconstruct the rotated and scaled vector back to a texcoord (just inverse operations of the first conversion
+        // above)
+        texcoord.x = (fov_x_pos - res.x) / fov_x_width;
+        texcoord.y = (res.y - fov_y_neg) / fov_y_width;
+
+        texcoord -= texcoord_center;
+        texcoord /= g_zoom;
+        texcoord += texcoord_center;
 
         // Get the original pixel color or black if outside original image
-        if (looking_behind || texcoord.x < 0 || texcoord.y < 0 || texcoord.x > 1 || texcoord.y > 1 || texcoord.x <= 0.005 && texcoord.y <= 0.005 || texcoord.x > g_display_res.x / ReShade::ScreenSize.x || texcoord.y > g_display_res.y / ReShade::ScreenSize.y)
+        if (looking_behind || texcoord.x < texcoord_x_min || texcoord.y < 0 || texcoord.x > texcoord_x_max || texcoord.y > 1 || texcoord.x <= 0.005 && texcoord.y <= 0.005)
             color = float4(0, 0, 0, 1);
         else
             color = tex2D(ReShade::BackBuffer, texcoord);
