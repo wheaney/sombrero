@@ -21,7 +21,8 @@ uniform float g_imu_data_period_ms < source = "imu_data_period_ms"; defaultValue
 uniform float2 g_look_ahead < source = "look_ahead_cfg"; defaultValue=float2(10.0f, 1.25f); >;
 uniform uint2 g_display_res < source = "display_res"; defaultValue=uint2(1920u, 1080u); >; // width, height
 uniform float g_display_fov < source = "display_fov"; defaultValue=46.0; >;
-uniform float g_zoom < source = "zoom"; defaultValue=1.0; >;
+uniform float g_display_zoom < source = "display_zoom"; defaultValue=1.0; >;
+uniform float g_display_north_offset < source = "display_north_offset"; defaultValue=1.0; >;
 uniform bool g_disabled < source = "disabled"; defaultValue=true; >;
 uniform float g_frametime < source = "averageframetime"; >;
 uniform float g_lens_distance_ratio < source = "lens_distance_ratio"; defaultValue=0.035; >;
@@ -29,6 +30,8 @@ uniform float4 imu_reset_data = float4(0, 0, 0, 1);
 uniform float4 g_date < source = "date"; >;
 uniform float4 g_keepalive_date < source = "keepalive_date"; >;
 uniform bool g_sbs_enabled < source = "sbs_enabled"; defaultValue=false; >;
+uniform bool g_sbs_content < source = "sbs_content"; defaultValue=false; >;
+uniform bool g_sbs_mode_stretched < source = "sbs_mode_stretched"; defaultValue=false; >;
 
 uniform uint day_in_seconds = 24 * 60 * 60;
 uniform float2 texcoord_center = float2(0.5f, 0.5f);
@@ -90,14 +93,35 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
             color = tex2D(ReShade::BackBuffer, texcoord);
         }
     } else {
-        // These variables are sort of overkill for now, but are broken out for future SBS support
         float texcoord_x_min = 0.0;
         float texcoord_x_max = 1.0;
         float2 screen_size = float2(ReShade::ScreenSize.x, ReShade::ScreenSize.y);
         float lens_y_offset = 0.0;
         float lens_z_offset = 0.0;
         if (g_sbs_enabled) {
-            // TODO - SBS support, modify the above variables based on left/right lens properties
+            bool right_display = texcoord.x > 0.5;
+            if (ReShade::AspectRatio > 2) screen_size.x /= 2;
+
+            lens_y_offset = g_lens_distance_ratio / 4;
+            if (right_display) lens_y_offset = -lens_y_offset;
+            if (g_sbs_content) {
+                // source video is SBS, left-half of the screen goes to the left lens, right-half to the right lens
+                if (right_display)
+                    texcoord_x_min = 0.5;
+                else
+                    texcoord_x_max = 0.5;
+            } else {
+                if (!g_sbs_mode_stretched) {
+                    // if the content isn't stretched, assume it's centered in the middle 50% of the screen
+                    texcoord_x_min = 0.25;
+                    texcoord_x_max = 0.75;
+                }
+            }
+
+            // translate the texcoord respresenting the current lens's half of the screen to a full-screen texcoord
+            // for the sake of creating a proper vector, we'll do the rest of the lens to screen translation
+            // when we inverse the vector after rotation
+            texcoord.x = (texcoord.x - (right_display ? 0.5 : 0.0)) * 2;
         }
 
         float screen_aspect_ratio = screen_size.x / screen_size.y;
@@ -158,7 +182,7 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
 
         // divide all values by x to scale the magnitude so x is exactly 1, and multiply by the final display distance
         // so the vector is pointing at a coordinate on the screen
-        float display_distance = 1.0 - res_lens.x;
+        float display_distance = g_display_north_offset - res_lens.x;
         res *= display_distance/res.x;
 
         // adjust x and y by how much our lens moved from its original offset
@@ -169,8 +193,12 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         texcoord.x = (fov_y_pos - res.y) / fov_y_width;
         texcoord.y = (fov_z_pos - res.z) / fov_z_width;
 
+        // apply the lens offsets now
+        float texcoord_width = texcoord_x_max - texcoord_x_min;
+        texcoord.x = texcoord.x * texcoord_width + texcoord_x_min;
+
         texcoord -= texcoord_center;
-        texcoord /= g_zoom;
+        texcoord /= g_display_zoom;
         texcoord += texcoord_center;
 
         // Get the original pixel color or black if outside original image
