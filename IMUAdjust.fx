@@ -94,8 +94,8 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         float texcoord_x_min = 0.0;
         float texcoord_x_max = 1.0;
         float2 screen_size = float2(ReShade::ScreenSize.x, ReShade::ScreenSize.y);
-        float lens_x_offset = 0.0;
         float lens_y_offset = 0.0;
+        float lens_z_offset = 0.0;
         if (g_sbs_enabled) {
             // TODO - SBS support, modify the above variables based on left/right lens properties
         }
@@ -106,30 +106,29 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         // TODO - fov is based on native aspect ratio, but that produces odd results due to how images at other aspect
         //        ratios are scaled, so for now, just use the aspect ratio of the original image
         float diag_to_vert_ratio = sqrt(pow(screen_aspect_ratio, 2) + 1);
-        float half_fov_y_rads = radians(g_display_fov / diag_to_vert_ratio)/2;
-        float half_fov_x_rads = half_fov_y_rads * screen_aspect_ratio;
+        float half_fov_z_rads = radians(g_display_fov / diag_to_vert_ratio)/2;
+        float half_fov_y_rads = half_fov_z_rads * screen_aspect_ratio;
 
         float screen_distance = 1.0 - g_lens_distance_ratio;
+
+        float lens_fov_z_offset_rads = atan(lens_z_offset/screen_distance);
+        float fov_z_pos = tan(half_fov_z_rads - lens_fov_z_offset_rads) * screen_distance;
+        float fov_z_neg = -tan(half_fov_z_rads + lens_fov_z_offset_rads) * screen_distance;
+        float fov_z_width = fov_z_pos - fov_z_neg;
 
         float lens_fov_y_offset_rads = atan(lens_y_offset/screen_distance);
         float fov_y_pos = tan(half_fov_y_rads - lens_fov_y_offset_rads) * screen_distance;
         float fov_y_neg = -tan(half_fov_y_rads + lens_fov_y_offset_rads) * screen_distance;
         float fov_y_width = fov_y_pos - fov_y_neg;
 
-        float lens_fov_x_offset_rads = atan(lens_x_offset/screen_distance);
-        float fov_x_pos = tan(half_fov_x_rads - lens_fov_x_offset_rads) * screen_distance;
-        float fov_x_neg = -tan(half_fov_x_rads + lens_fov_x_offset_rads) * screen_distance;
-        float fov_x_width = fov_x_pos - fov_x_neg;
-
-        // Convert texcoord coordinates into a vector, where the screen's center (texcoord {0.5,0.5}) is at (0,0,1).
-        // The screen appears flat across a curved field-of-view, so keeping z fixed at 1 correctly yields vectors
+        // Convert texcoord coordinates into a NWU vector, where the screen's center (texcoord {0.5,0.5}) is at (1,0,0).
+        // The screen appears flat across a curved field-of-view, so keeping x/north fixed at 1 correctly yields vectors
         // that range in magnitude from a min value 1 at the center to max values at the corners of the screen.
-        // TODO - typically texcoord (0,0) is the bottom-left corner, this is treating it as bottom-right? need to flip sign of texcoord.x to compute vec_x
-        float vec_x = -texcoord.x * fov_x_width + fov_x_pos;
-        float vec_y = texcoord.y * fov_y_width + fov_y_neg;
-        float vec_z = screen_distance;
+        float vec_x = screen_distance;
+        float vec_y = -texcoord.x * fov_y_width + fov_y_pos;
+        float vec_z = texcoord.y * fov_z_width + fov_z_neg;
         float3 texcoord_vector = float3(vec_x, vec_y, vec_z);
-        float3 lens_vector = float3(lens_x_offset, 0, g_lens_distance_ratio);
+        float3 lens_vector = float3(g_lens_distance_ratio, lens_y_offset, lens_z_offset);
 
         // then rotate the vector using each of the snapshots provided
         float3 rotated_vector_t0 = applyQuaternionToVector(g_imu_quat_data[0], texcoord_vector);
@@ -158,20 +157,20 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         // rotate it to the frame-of-reference, using its conjugate
         float3 res = applyQuaternionToVector(quatConj(g_imu_quat_data[3]), look_ahead_vector);
         float3 res_lens = applyQuaternionToVector(quatConj(g_imu_quat_data[3]), look_ahead_lens_vector);
-        bool looking_behind = res.z < 0;
+        bool looking_behind = res.x < 0;
 
-        // divide all values by z to scale the magnitude so z is exactly 1, and multiply by the final display distance
+        // divide all values by x to scale the magnitude so x is exactly 1, and multiply by the final display distance
         // so the vector is pointing at a coordinate on the screen
-        float display_distance = 1.0 - res_lens.z;
-        res *= display_distance/res.z;
+        float display_distance = 1.0 - res_lens.x;
+        res *= display_distance/res.x;
 
         // adjust x and y by how much our lens moved from its original offset
         res += res_lens - lens_vector;
 
         // deconstruct the rotated and scaled vector back to a texcoord (just inverse operations of the first conversion
         // above)
-        texcoord.x = (fov_x_pos - res.x) / fov_x_width;
-        texcoord.y = (res.y - fov_y_neg) / fov_y_width;
+        texcoord.x = (fov_y_pos - res.y) / fov_y_width;
+        texcoord.y = (res.z - fov_z_neg) / fov_z_width;
 
         texcoord -= texcoord_center;
         texcoord /= g_zoom;
