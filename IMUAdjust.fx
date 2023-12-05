@@ -126,15 +126,16 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         // that range in magnitude from a min value 1 at the center to max values at the corners of the screen.
         float vec_x = screen_distance;
         float vec_y = -texcoord.x * fov_y_width + fov_y_pos;
-        float vec_z = texcoord.y * fov_z_width + fov_z_neg;
+        float vec_z = -texcoord.y * fov_z_width + fov_z_pos;
         float3 texcoord_vector = float3(vec_x, vec_y, vec_z);
         float3 lens_vector = float3(g_lens_distance_ratio, lens_y_offset, lens_z_offset);
 
         // then rotate the vector using each of the snapshots provided
-        float3 rotated_vector_t0 = applyQuaternionToVector(g_imu_quat_data[0], texcoord_vector);
-        float3 rotated_vector_t1 = applyQuaternionToVector(g_imu_quat_data[1], texcoord_vector);
-        float3 rotated_vector_t2 = applyQuaternionToVector(g_imu_quat_data[2], texcoord_vector);
-        float3 rotated_lens_vector = applyQuaternionToVector(g_imu_quat_data[0], lens_vector);
+        float4 screen_center = quatConj(g_imu_quat_data[3]);
+        float3 rotated_vector_t0 = applyQuaternionToVector(quatMul(screen_center, g_imu_quat_data[0]), texcoord_vector);
+        float3 rotated_vector_t1 = applyQuaternionToVector(quatMul(screen_center, g_imu_quat_data[1]), texcoord_vector);
+        float3 rotated_vector_t2 = applyQuaternionToVector(quatMul(screen_center, g_imu_quat_data[2]), texcoord_vector);
+        float3 rotated_lens_vector = applyQuaternionToVector(quatMul(screen_center, g_imu_quat_data[0]), lens_vector);
 
         // compute the two velocities (units/ms) as change in the 3 rotation snapshots
         float3 velocity_t0 = rate_of_change(rotated_vector_t0, rotated_vector_t1, g_imu_data_period_ms);
@@ -151,12 +152,8 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         float look_ahead_ms_squared = pow(look_ahead_ms, 2);
 
         // apply most recent velocity and acceleration to most recent position to get a predicted position
-        float3 look_ahead_vector = applyLookAhead(rotated_vector_t0, velocity_t0, accel_t0, look_ahead_ms, look_ahead_ms_squared);
-        float3 look_ahead_lens_vector = applyLookAhead(rotated_lens_vector, velocity_t0, accel_t0, look_ahead_ms, look_ahead_ms_squared);
-
-        // rotate it to the frame-of-reference, using its conjugate
-        float3 res = applyQuaternionToVector(quatConj(g_imu_quat_data[3]), look_ahead_vector);
-        float3 res_lens = applyQuaternionToVector(quatConj(g_imu_quat_data[3]), look_ahead_lens_vector);
+        float3 res = applyLookAhead(rotated_vector_t0, velocity_t0, accel_t0, look_ahead_ms, look_ahead_ms_squared);
+        float3 res_lens = applyLookAhead(rotated_lens_vector, velocity_t0, accel_t0, look_ahead_ms, look_ahead_ms_squared);
         bool looking_behind = res.x < 0;
 
         // divide all values by x to scale the magnitude so x is exactly 1, and multiply by the final display distance
@@ -170,7 +167,7 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         // deconstruct the rotated and scaled vector back to a texcoord (just inverse operations of the first conversion
         // above)
         texcoord.x = (fov_y_pos - res.y) / fov_y_width;
-        texcoord.y = (res.z - fov_z_neg) / fov_z_width;
+        texcoord.y = (fov_z_pos - res.z) / fov_z_width;
 
         texcoord -= texcoord_center;
         texcoord /= g_zoom;
