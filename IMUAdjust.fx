@@ -182,7 +182,7 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
 
         // divide all values by x to scale the magnitude so x is exactly 1, and multiply by the final display distance
         // so the vector is pointing at a coordinate on the screen
-        float display_distance = g_display_north_offset - res_lens.x;
+        float display_distance = (g_sbs_enabled ? g_display_north_offset : 1.0) - res_lens.x;
         res *= display_distance/res.x;
 
         // adjust x and y by how much our lens moved from its original offset
