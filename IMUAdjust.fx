@@ -110,16 +110,15 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
                     texcoord_x_min = 0.5;
                 else
                     texcoord_x_max = 0.5;
-            } else {
-                if (!g_sbs_mode_stretched) {
-                    // if the content isn't stretched, assume it's centered in the middle 50% of the screen
-                    texcoord_x_min = 0.25;
-                    texcoord_x_max = 0.75;
-                }
+            }
+            if (!g_sbs_mode_stretched) {
+                // if the content isn't stretched, assume it's centered in the middle 50% of the screen
+                texcoord_x_min = max(0.25, texcoord_x_min);
+                texcoord_x_max = min(0.75, texcoord_x_max);
             }
 
             // translate the texcoord respresenting the current lens's half of the screen to a full-screen texcoord
-            // for the sake of creating a proper vector, we'll do the rest of the lens to screen translation
+            // for the sake of creating a proper vector, we'll do the final adjustment to where content is on the screen
             // when we inverse the vector after rotation
             texcoord.x = (texcoord.x - (right_display ? 0.5 : 0.0)) * 2;
         }
@@ -193,7 +192,7 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         texcoord.x = (fov_y_pos - res.y) / fov_y_width;
         texcoord.y = (fov_z_pos - res.z) / fov_z_width;
 
-        // apply the lens offsets now
+        // apply the screen offsets now
         float texcoord_width = texcoord_x_max - texcoord_x_min;
         texcoord.x = texcoord.x * texcoord_width + texcoord_x_min;
 
