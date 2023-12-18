@@ -34,7 +34,6 @@ uniform bool g_sbs_content < source = "sbs_content"; defaultValue=false; >;
 uniform bool g_sbs_mode_stretched < source = "sbs_mode_stretched"; defaultValue=false; >;
 
 uniform uint day_in_seconds = 24 * 60 * 60;
-uniform float2 texcoord_center = float2(0.5f, 0.5f);
 
 // cap look-ahead, beyond this it may get jittery and unusable
 #define LOOK_AHEAD_MS_CAP 30.0
@@ -78,6 +77,34 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
 {
     bool is_imu_reset_state = all(g_imu_quat_data[0] == imu_reset_data) && all(g_imu_quat_data[1] == imu_reset_data);
     bool is_keepalive_valid = is_keepalive_recent(g_date, g_keepalive_date);
+    float texcoord_x_min = 0.0;
+    float texcoord_x_max = 1.0;
+    float2 screen_size = float2(ReShade::ScreenSize.x, ReShade::ScreenSize.y);
+    float lens_y_offset = 0.0;
+    float lens_z_offset = 0.0;
+    if (g_sbs_enabled) {
+        bool right_display = texcoord.x > 0.5;
+        if (ReShade::AspectRatio > 2) screen_size.x /= 2;
+
+        lens_y_offset = g_lens_distance_ratio / 4;
+        if (right_display) lens_y_offset = -lens_y_offset;
+        if (g_sbs_content) {
+            // source video is SBS, left-half of the screen goes to the left lens, right-half to the right lens
+            if (right_display)
+                texcoord_x_min = 0.5;
+            else
+                texcoord_x_max = 0.5;
+        }
+        if (!g_sbs_mode_stretched) {
+            // if the content isn't stretched, assume it's centered in the middle 50% of the screen
+            texcoord_x_min = max(0.25, texcoord_x_min);
+            texcoord_x_max = min(0.75, texcoord_x_max);
+        }
+
+        // translate the texcoord respresenting the current lens's half of the screen to a full-screen texcoord
+        if (!g_disabled && is_keepalive_valid) texcoord.x = (texcoord.x - (right_display ? 0.5 : 0.0)) * 2;
+    }
+
     if (g_disabled || is_imu_reset_state || !is_keepalive_valid) {
         float2 banner_size = float2(800.0 / ReShade::ScreenSize.x, 200.0 / ReShade::ScreenSize.y); // Assuming ScreenWidth and ScreenHeight are defined
 
@@ -90,39 +117,13 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
             float2 banner_texcoord = (texcoord - (banner_position - banner_size / 2)) / banner_size;
             color = tex2D(calibratingSampler, banner_texcoord);
         } else {
+            // adjust texcoord back to the range that describes where the content is displayed
+            float texcoord_width = texcoord_x_max - texcoord_x_min;
+            texcoord.x = texcoord.x * texcoord_width + texcoord_x_min;
+
             color = tex2D(ReShade::BackBuffer, texcoord);
         }
     } else {
-        float texcoord_x_min = 0.0;
-        float texcoord_x_max = 1.0;
-        float2 screen_size = float2(ReShade::ScreenSize.x, ReShade::ScreenSize.y);
-        float lens_y_offset = 0.0;
-        float lens_z_offset = 0.0;
-        if (g_sbs_enabled) {
-            bool right_display = texcoord.x > 0.5;
-            if (ReShade::AspectRatio > 2) screen_size.x /= 2;
-
-            lens_y_offset = g_lens_distance_ratio / 4;
-            if (right_display) lens_y_offset = -lens_y_offset;
-            if (g_sbs_content) {
-                // source video is SBS, left-half of the screen goes to the left lens, right-half to the right lens
-                if (right_display)
-                    texcoord_x_min = 0.5;
-                else
-                    texcoord_x_max = 0.5;
-            }
-            if (!g_sbs_mode_stretched) {
-                // if the content isn't stretched, assume it's centered in the middle 50% of the screen
-                texcoord_x_min = max(0.25, texcoord_x_min);
-                texcoord_x_max = min(0.75, texcoord_x_max);
-            }
-
-            // translate the texcoord respresenting the current lens's half of the screen to a full-screen texcoord
-            // for the sake of creating a proper vector, we'll do the final adjustment to where content is on the screen
-            // when we inverse the vector after rotation
-            texcoord.x = (texcoord.x - (right_display ? 0.5 : 0.0)) * 2;
-        }
-
         float screen_aspect_ratio = screen_size.x / screen_size.y;
         float native_aspect_ratio = g_display_res.x / g_display_res.y;
 
@@ -196,6 +197,7 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         float texcoord_width = texcoord_x_max - texcoord_x_min;
         texcoord.x = texcoord.x * texcoord_width + texcoord_x_min;
 
+        float2 texcoord_center = float2(texcoord_x_min + texcoord_width/2.0f, 0.5f);
         texcoord -= texcoord_center;
         texcoord /= g_display_zoom;
         texcoord += texcoord_center;
