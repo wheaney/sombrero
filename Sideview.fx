@@ -10,9 +10,21 @@ uniform uint g_sideview_position < source = "sideview_position"; defaultValue=0;
 uniform bool g_sideview_enabled < source = "sideview_enabled"; defaultValue=false; >;
 uniform float g_sideview_display_size < source = "sideview_display_size"; defaultValue=1.0f; >;
 
+uniform float4 g_date < source = "date"; >;
+uniform float4 g_keepalive_date < source = "keepalive_date"; >;
+
+uniform uint day_in_seconds = 24 * 60 * 60;
+
+// super naive check, just make sure the times are within 5 seconds of each other, ignore year, month, day
+bool is_keepalive_recent(float4 currentDate, float4 keepAliveDate)
+{
+    return abs((currentDate.w + day_in_seconds - keepAliveDate.w) % day_in_seconds) <= 5.0;
+}
+
 void PS_Sideview_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out float4 color : SV_Target)
 {
-    if (!g_disabled && g_sideview_enabled) {
+    bool is_keepalive_valid = is_keepalive_recent(g_date, g_keepalive_date);
+    if (!g_disabled && g_sideview_enabled && is_keepalive_valid) {
         float texcoord_x_min = 0.0;
         float texcoord_x_max = 1.0;
         float texcoord_y_min = 0.0;
