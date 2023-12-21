@@ -24,6 +24,7 @@ uniform float g_display_fov < source = "display_fov"; defaultValue=46.0; >;
 uniform float g_display_zoom < source = "display_zoom"; defaultValue=1.0; >;
 uniform float g_display_north_offset < source = "display_north_offset"; defaultValue=1.0; >;
 uniform bool g_disabled < source = "disabled"; defaultValue=true; >;
+uniform bool g_virtual_display_enabled < source = "virtual_display_enabled"; defaultValue=false; >;
 uniform float g_frametime < source = "averageframetime"; >;
 uniform float g_lens_distance_ratio < source = "lens_distance_ratio"; defaultValue=0.035; >;
 uniform float4 imu_reset_data = float4(0, 0, 0, 1);
@@ -76,7 +77,7 @@ bool is_keepalive_recent(float4 currentDate, float4 keepAliveDate)
 void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out float4 color : SV_Target)
 {
     bool is_keepalive_valid = is_keepalive_recent(g_date, g_keepalive_date);
-    bool shader_disabled = g_disabled || !is_keepalive_valid;
+    bool shader_disabled = g_disabled || !g_virtual_display_enabled || !is_keepalive_valid;
     bool is_imu_reset_state = all(g_imu_quat_data[0] == imu_reset_data) && all(g_imu_quat_data[1] == imu_reset_data);
     float texcoord_x_min = 0.0;
     float texcoord_x_max = 1.0;
