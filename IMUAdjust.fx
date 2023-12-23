@@ -75,14 +75,15 @@ bool is_keepalive_recent(float4 currentDate, float4 keepAliveDate)
 
 void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out float4 color : SV_Target)
 {
-    bool is_imu_reset_state = all(g_imu_quat_data[0] == imu_reset_data) && all(g_imu_quat_data[1] == imu_reset_data);
     bool is_keepalive_valid = is_keepalive_recent(g_date, g_keepalive_date);
+    bool shader_disabled = g_disabled || !is_keepalive_valid;
+    bool is_imu_reset_state = all(g_imu_quat_data[0] == imu_reset_data) && all(g_imu_quat_data[1] == imu_reset_data);
     float texcoord_x_min = 0.0;
     float texcoord_x_max = 1.0;
     float2 screen_size = float2(ReShade::ScreenSize.x, ReShade::ScreenSize.y);
     float lens_y_offset = 0.0;
     float lens_z_offset = 0.0;
-    if (g_sbs_enabled) {
+    if (g_sbs_enabled && !shader_disabled) {
         bool right_display = texcoord.x > 0.5;
         if (ReShade::AspectRatio > 2) screen_size.x /= 2;
 
@@ -102,13 +103,13 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         }
 
         // translate the texcoord respresenting the current lens's half of the screen to a full-screen texcoord
-        if (!g_disabled && is_keepalive_valid) texcoord.x = (texcoord.x - (right_display ? 0.5 : 0.0)) * 2;
+        texcoord.x = (texcoord.x - (right_display ? 0.5 : 0.0)) * 2;
     }
 
-    if (g_disabled || is_imu_reset_state || !is_keepalive_valid) {
+    if (shader_disabled || is_imu_reset_state) {
         float2 banner_size = float2(800.0 / ReShade::ScreenSize.x, 200.0 / ReShade::ScreenSize.y); // Assuming ScreenWidth and ScreenHeight are defined
 
-        if (!g_disabled && is_keepalive_valid &&
+        if (!shader_disabled &&
             texcoord.x >= banner_position.x - banner_size.x / 2 &&
             texcoord.x <= banner_position.x + banner_size.x / 2 &&
             texcoord.y >= banner_position.y - banner_size.y / 2 &&
