@@ -15,15 +15,19 @@ uniform float4x4 g_imu_quat_data < source = "imu_quat_data"; defaultValue=float4
     0.0,    0.0,    0.0,    0.0, // snapshot at t0
     0.0,    0.0,    0.0,    0.0, // snapshot at t1 (for velocity 1)
     0.0,    0.0,    0.0,    0.0, // snapshot at t2 (for velocity 2, accel 1)
-    0.0,    0.0,    0.0,    0.0  // screen-center/frame-of-reference
+    0.0,    0.0,    0.0,    0.0  // unused
 ); >;
 uniform float g_imu_data_period_ms < source = "imu_data_period_ms"; defaultValue=10.0; >;
-uniform float2 g_look_ahead < source = "look_ahead_cfg"; defaultValue=float2(10.0f, 1.25f); >;
+uniform float4 g_look_ahead < source = "look_ahead_cfg"; defaultValue=float4(
+    10.0f,  // look-ahead constant, in ms
+    1.25f,  // look-ahead frametime multiplier, where frametime is ms/frame
+    1.0f,   // scanline adjust
+    30.0f   // look-ahead cap, in ms
+); >;
 uniform uint2 g_display_res < source = "display_res"; defaultValue=uint2(1920u, 1080u); >; // width, height
 uniform float g_display_fov < source = "display_fov"; defaultValue=46.0; >;
 uniform float g_display_zoom < source = "display_zoom"; defaultValue=1.0; >;
 uniform float g_display_north_offset < source = "display_north_offset"; defaultValue=1.0; >;
-uniform bool g_disabled < source = "disabled"; defaultValue=true; >;
 uniform bool g_virtual_display_enabled < source = "virtual_display_enabled"; defaultValue=false; >;
 uniform float g_frametime < source = "averageframetime"; >;
 uniform float g_lens_distance_ratio < source = "lens_distance_ratio"; defaultValue=0.035; >;
@@ -64,20 +68,20 @@ float3 applyQuaternionToVector(float4 q, float3 v) {
 
 // returns the rate of change between the two vectors, in same time units as delta_time
 // e.g. if delta_time is in ms, then the rate of change is "per ms"
-float3 rate_of_change(float3 v1, float3 v2, float delta_time) {
+float3 rateOfChange(float3 v1, float3 v2, float delta_time) {
     return (v1-v2) / delta_time;
 }
 
 // super naive check, just make sure the times are within 5 seconds of each other, ignore year, month, day
-bool is_keepalive_recent(float4 currentDate, float4 keepAliveDate)
+bool isKeepaliveRecent(float4 currentDate, float4 keepAliveDate)
 {
     return abs((currentDate.w + day_in_seconds - keepAliveDate.w) % day_in_seconds) <= 5.0;
 }
 
 void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out float4 color : SV_Target)
 {
-    bool is_keepalive_valid = is_keepalive_recent(g_date, g_keepalive_date);
-    bool shader_disabled = g_disabled || !g_virtual_display_enabled || !is_keepalive_valid;
+    bool is_keepalive_valid = isKeepaliveRecent(g_date, g_keepalive_date);
+    bool shader_disabled = !g_virtual_display_enabled || !is_keepalive_valid;
     bool is_imu_reset_state = all(g_imu_quat_data[0] == imu_reset_data) && all(g_imu_quat_data[1] == imu_reset_data);
     float texcoord_x_min = 0.0;
     float texcoord_x_max = 1.0;
@@ -157,38 +161,37 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         float3 lens_vector = float3(g_lens_distance_ratio, lens_y_offset, lens_z_offset);
 
         // then rotate the vector using each of the snapshots provided
-        float4 screen_center = quatConj(g_imu_quat_data[3]);
-        float3 rotated_vector_t0 = applyQuaternionToVector(quatMul(screen_center, g_imu_quat_data[0]), texcoord_vector);
-        float3 rotated_vector_t1 = applyQuaternionToVector(quatMul(screen_center, g_imu_quat_data[1]), texcoord_vector);
-        float3 rotated_vector_t2 = applyQuaternionToVector(quatMul(screen_center, g_imu_quat_data[2]), texcoord_vector);
-        float3 rotated_lens_vector = applyQuaternionToVector(quatMul(screen_center, g_imu_quat_data[0]), lens_vector);
+        float3 rotated_vector_t0 = applyQuaternionToVector(g_imu_quat_data[0], texcoord_vector);
+        float3 rotated_vector_t1 = applyQuaternionToVector(g_imu_quat_data[1], texcoord_vector);
+        float3 rotated_vector_t2 = applyQuaternionToVector(g_imu_quat_data[2], texcoord_vector);
+        float3 rotated_lens_vector = applyQuaternionToVector(g_imu_quat_data[0], lens_vector);
 
         // compute the two velocities (units/ms) as change in the 3 rotation snapshots
-        float3 velocity_t0 = rate_of_change(rotated_vector_t0, rotated_vector_t1, g_imu_data_period_ms);
-        float3 velocity_t1 = rate_of_change(rotated_vector_t1, rotated_vector_t2, g_imu_data_period_ms);
+        float3 velocity_t0 = rateOfChange(rotated_vector_t0, rotated_vector_t1, g_imu_data_period_ms);
+        float3 velocity_t1 = rateOfChange(rotated_vector_t1, rotated_vector_t2, g_imu_data_period_ms);
 
         // and then the acceleration (units/ms^2) as the change in velocities
-        float3 accel_t0 = rate_of_change(velocity_t0, velocity_t1, g_imu_data_period_ms);
+        float3 accel_t0 = rateOfChange(velocity_t0, velocity_t1, g_imu_data_period_ms);
 
-        // the bottom of the screen seems to refresh later than the top, need a bigger look-ahead as y approaches 1
-        // TODO - move this to a runtime uniform value provided by the driver since it will vary by device
-        float look_ahead_scanline_adjust = texcoord.y * 5;
+        // allows for the bottom and top of the screen to have different look-ahead values
+        float look_ahead_scanline_adjust = texcoord.y * g_look_ahead.z;
 
-        float look_ahead_ms = min(g_look_ahead.x + g_frametime * g_look_ahead.y, LOOK_AHEAD_MS_CAP) + look_ahead_scanline_adjust;
+        // use the 4th value of the look-ahead config to cap the look-ahead value
+        float look_ahead_ms = min(min(g_look_ahead.x + g_frametime * g_look_ahead.y, g_look_ahead.w), LOOK_AHEAD_MS_CAP) + look_ahead_scanline_adjust;
         float look_ahead_ms_squared = pow(look_ahead_ms, 2);
 
         // apply most recent velocity and acceleration to most recent position to get a predicted position
         float3 res = applyLookAhead(rotated_vector_t0, velocity_t0, accel_t0, look_ahead_ms, look_ahead_ms_squared);
-        float3 res_lens = applyLookAhead(rotated_lens_vector, velocity_t0, accel_t0, look_ahead_ms, look_ahead_ms_squared);
+
         bool looking_behind = res.x < 0;
 
         // divide all values by x to scale the magnitude so x is exactly 1, and multiply by the final display distance
         // so the vector is pointing at a coordinate on the screen
-        float display_distance = (g_sbs_enabled ? g_display_north_offset : 1.0) - res_lens.x;
+        float display_distance = (g_sbs_enabled ? g_display_north_offset : 1.0) - rotated_lens_vector.x;
         res *= display_distance/res.x;
 
         // adjust x and y by how much our lens moved from its original offset
-        res += res_lens - lens_vector;
+        res += rotated_lens_vector - lens_vector;
 
         // deconstruct the rotated and scaled vector back to a texcoord (just inverse operations of the first conversion
         // above)

@@ -1,9 +1,6 @@
 // ReShade shader to shrink the image toward one corner of the screen
 #include "ReShade.fxh"
 
-// general external can be disabled, overriding sideview_enabled
-uniform bool g_disabled < source = "disabled"; defaultValue=true; >;
-
 // 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right
 uniform uint g_sideview_position < source = "sideview_position"; defaultValue=0; >;
 
@@ -24,7 +21,7 @@ bool is_keepalive_recent(float4 currentDate, float4 keepAliveDate)
 void PS_Sideview_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out float4 color : SV_Target)
 {
     bool is_keepalive_valid = is_keepalive_recent(g_date, g_keepalive_date);
-    if (!g_disabled && g_sideview_enabled && is_keepalive_valid) {
+    if (g_sideview_enabled && is_keepalive_valid) {
         float texcoord_x_min = 0.0;
         float texcoord_x_max = 1.0;
         float texcoord_y_min = 0.0;
