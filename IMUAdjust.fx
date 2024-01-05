@@ -30,7 +30,7 @@ uniform float g_display_zoom < source = "display_zoom"; defaultValue=1.0; >;
 uniform float g_display_north_offset < source = "display_north_offset"; defaultValue=1.0; >;
 uniform bool g_virtual_display_enabled < source = "virtual_display_enabled"; defaultValue=false; >;
 uniform float g_frametime < source = "averageframetime"; >;
-uniform float g_lens_distance_ratio < source = "lens_distance_ratio"; defaultValue=0.035; >;
+uniform float g_lens_distance_ratio < source = "lens_distance_ratio"; defaultValue=0.025; >;
 uniform float4 imu_reset_data = float4(0, 0, 0, 1);
 uniform float4 g_date < source = "date"; >;
 uniform float4 g_keepalive_date < source = "keepalive_date"; >;
@@ -92,7 +92,7 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         bool right_display = texcoord.x > 0.5;
         if (ReShade::AspectRatio > 2) screen_size.x /= 2;
 
-        lens_y_offset = g_lens_distance_ratio / 4;
+        lens_y_offset = g_lens_distance_ratio / 3;
         if (right_display) lens_y_offset = -lens_y_offset;
         if (g_sbs_content) {
             // source video is SBS, left-half of the screen goes to the left lens, right-half to the right lens
