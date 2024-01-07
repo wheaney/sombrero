@@ -1,7 +1,7 @@
 // ReShade shader to shrink the image toward one corner of the screen
 #include "ReShade.fxh"
 
-// 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right
+// 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right, 4 = center
 uniform uint g_sideview_position < source = "sideview_position"; defaultValue=0; >;
 
 uniform bool g_sideview_enabled < source = "sideview_enabled"; defaultValue=false; >;
@@ -41,6 +41,12 @@ void PS_Sideview_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord,
         } else {
             // right
             texcoord_x_min = 1.0 - g_sideview_display_size;
+        }
+
+        if (g_sideview_position == 4) {
+            // center
+            texcoord_x_min = texcoord_y_min = (1.0 - g_sideview_display_size) / 2.0;
+            texcoord_x_max = texcoord_y_max = (1.0 + g_sideview_display_size) / 2.0;
         }
 
         if (texcoord.x < texcoord_x_min || texcoord.x > texcoord_x_max || texcoord.y < texcoord_y_min || texcoord.y > texcoord_y_max)
