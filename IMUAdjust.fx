@@ -8,6 +8,13 @@ texture2D calibratingImage < source = "calibrating.png"; > {
 sampler2D calibratingSampler {
 	Texture = calibratingImage;
 };
+texture2D customBannerImage < source = "custom_banner.png"; > {
+    Width = 800;
+    Height = 200;
+};
+sampler2D customBannerSampler {
+	Texture = customBannerImage;
+};
 uniform float2 banner_position = float2(0.5, 0.9);
 
 uniform float4x4 g_imu_quat_data < source = "imu_quat_data"; defaultValue=float4x4(
@@ -37,6 +44,7 @@ uniform float4 g_keepalive_date < source = "keepalive_date"; >;
 uniform bool g_sbs_enabled < source = "sbs_enabled"; defaultValue=false; >;
 uniform bool g_sbs_content < source = "sbs_content"; defaultValue=false; >;
 uniform bool g_sbs_mode_stretched < source = "sbs_mode_stretched"; defaultValue=false; >;
+uniform bool g_custom_banner_enabled < source = "custom_banner_enabled"; defaultValue=false; >;
 
 uniform uint day_in_seconds = 24 * 60 * 60;
 
@@ -121,7 +129,11 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
             texcoord.y <= banner_position.y + banner_size.y / 2)
         {
             float2 banner_texcoord = (texcoord - (banner_position - banner_size / 2)) / banner_size;
-            color = tex2D(calibratingSampler, banner_texcoord);
+            if (g_custom_banner_enabled) {
+                color = tex2D(customBannerSampler, banner_texcoord);
+            } else {
+                color = tex2D(calibratingSampler, banner_texcoord);
+            }
         } else {
             // adjust texcoord back to the range that describes where the content is displayed
             float texcoord_width = texcoord_x_max - texcoord_x_min;
