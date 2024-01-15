@@ -18,13 +18,11 @@ sampler2D customBannerSampler {
 uniform float2 banner_position = float2(0.5, 0.9);
 
 uniform float4x4 g_imu_quat_data < source = "imu_quat_data"; defaultValue=float4x4(
-//  w,      x,      y,      z,
-    0.0,    0.0,    0.0,    0.0, // snapshot at t0
-    0.0,    0.0,    0.0,    0.0, // snapshot at t1 (for velocity 1)
-    0.0,    0.0,    0.0,    0.0, // snapshot at t2 (for velocity 2, accel 1)
-    0.0,    0.0,    0.0,    0.0  // unused
+    0.0,    0.0,    0.0,    0.0, // quat snapshot at t0
+    0.0,    0.0,    0.0,    0.0, // quat snapshot at t1 (for velocity 1)
+    0.0,    0.0,    0.0,    0.0, // quat snapshot at t2 (for velocity 2, accel 1)
+    0.0,    0.0,    0.0,    0.0  // timestamps for t0, t1, and t2, last value is unused
 ); >;
-uniform float g_imu_data_period_ms < source = "imu_data_period_ms"; defaultValue=10.0; >;
 uniform float4 g_look_ahead < source = "look_ahead_cfg"; defaultValue=float4(
     10.0f,  // look-ahead constant, in ms
     1.25f,  // look-ahead frametime multiplier, where frametime is ms/frame
@@ -179,11 +177,12 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         float3 rotated_lens_vector = applyQuaternionToVector(g_imu_quat_data[0], lens_vector);
 
         // compute the two velocities (units/ms) as change in the 3 rotation snapshots
-        float3 velocity_t0 = rateOfChange(rotated_vector_t0, rotated_vector_t1, g_imu_data_period_ms);
-        float3 velocity_t1 = rateOfChange(rotated_vector_t1, rotated_vector_t2, g_imu_data_period_ms);
+        float delta_time_t0 = g_imu_quat_data[3].x - g_imu_quat_data[3].y;
+        float3 velocity_t0 = rateOfChange(rotated_vector_t0, rotated_vector_t1, delta_time_t0);
+        float3 velocity_t1 = rateOfChange(rotated_vector_t1, rotated_vector_t2, g_imu_quat_data[3].y-g_imu_quat_data[3].z);
 
         // and then the acceleration (units/ms^2) as the change in velocities
-        float3 accel_t0 = rateOfChange(velocity_t0, velocity_t1, g_imu_data_period_ms);
+        float3 accel_t0 = rateOfChange(velocity_t0, velocity_t1, delta_time_t0);
 
         // allows for the bottom and top of the screen to have different look-ahead values
         float look_ahead_scanline_adjust = texcoord.y * g_look_ahead.z;
