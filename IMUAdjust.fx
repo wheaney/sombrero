@@ -47,7 +47,7 @@ uniform bool g_custom_banner_enabled < source = "custom_banner_enabled"; default
 uniform uint day_in_seconds = 24 * 60 * 60;
 
 // cap look-ahead, beyond this it may get jittery and unusable
-#define LOOK_AHEAD_MS_CAP 30.0
+#define LOOK_AHEAD_MS_CAP 45.0
 
 // attempt to figure out where the current position should be based on previous position, velocity, and acceleration.
 // velocity, accel, and time values should all use the same time units (secs, ms, etc...)
