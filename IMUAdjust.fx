@@ -151,23 +151,17 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
 
         float screen_distance = 1.0 - g_lens_distance_ratio;
 
-        float lens_fov_z_offset_rads = atan(lens_z_offset/screen_distance);
-        float fov_z_pos = tan(half_fov_z_rads - lens_fov_z_offset_rads) * screen_distance;
-        float fov_z_neg = -tan(half_fov_z_rads + lens_fov_z_offset_rads) * screen_distance;
-        float fov_z_width = fov_z_pos - fov_z_neg;
-
-        float lens_fov_y_offset_rads = atan(lens_y_offset/screen_distance);
-        float fov_y_pos = tan(half_fov_y_rads - lens_fov_y_offset_rads) * screen_distance;
-        float fov_y_neg = -tan(half_fov_y_rads + lens_fov_y_offset_rads) * screen_distance;
-        float fov_y_width = fov_y_pos - fov_y_neg;
+        float fov_y_half_width = tan(half_fov_y_rads) * screen_distance;
+        float fov_y_width = fov_y_half_width * 2;
+        float fov_z_half_width = tan(half_fov_z_rads) * screen_distance;
+        float fov_z_width = fov_z_half_width * 2;
 
         // Convert texcoord coordinates into a NWU vector, where the screen's center (texcoord {0.5,0.5}) is at (1,0,0).
         // The screen appears flat across a curved field-of-view, so keeping x/north fixed at 1 correctly yields vectors
         // that range in magnitude from a min value 1 at the center to max values at the corners of the screen.
-        float vec_x = screen_distance;
-        float vec_y = -texcoord.x * fov_y_width + fov_y_pos;
-        float vec_z = -texcoord.y * fov_z_width + fov_z_pos;
-        float3 texcoord_vector = float3(vec_x, vec_y, vec_z);
+        float vec_y = -texcoord.x * fov_y_width + fov_y_half_width;
+        float vec_z = -texcoord.y * fov_z_width + fov_z_half_width;
+        float3 texcoord_vector = float3(1.0, vec_y, vec_z);
         float3 lens_vector = float3(g_lens_distance_ratio, lens_y_offset, lens_z_offset);
 
         // then rotate the vector using each of the snapshots provided
@@ -192,7 +186,8 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         float look_ahead_ms_squared = pow(look_ahead_ms, 2);
 
         // apply most recent velocity and acceleration to most recent position to get a predicted position
-        float3 res = applyLookAhead(rotated_vector_t0, velocity_t0, accel_t0, look_ahead_ms, look_ahead_ms_squared);
+        float3 res = applyLookAhead(rotated_vector_t0, velocity_t0, accel_t0, look_ahead_ms, look_ahead_ms_squared) - 
+                        rotated_lens_vector;
 
         bool looking_behind = res.x < 0;
 
@@ -200,14 +195,12 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         // so the vector is pointing at a coordinate on the screen
         float display_distance = (g_sbs_enabled ? g_display_north_offset : 1.0) - rotated_lens_vector.x;
         res *= display_distance/res.x;
-
-        // adjust x and y by how much our lens moved from its original offset
-        res += rotated_lens_vector - lens_vector;
+        res += rotated_lens_vector;
 
         // deconstruct the rotated and scaled vector back to a texcoord (just inverse operations of the first conversion
         // above)
-        texcoord.x = (fov_y_pos - res.y) / fov_y_width;
-        texcoord.y = (fov_z_pos - res.z) / fov_z_width;
+        texcoord.x = (fov_y_half_width - res.y) / fov_y_width;
+        texcoord.y = (fov_z_half_width - res.z) / fov_z_width;
 
         // apply the screen offsets now
         float texcoord_width = texcoord_x_max - texcoord_x_min;
