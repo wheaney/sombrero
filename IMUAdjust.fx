@@ -34,20 +34,23 @@ uniform float g_display_fov < source = "display_fov"; defaultValue=46.0; >;
 uniform float g_display_zoom < source = "display_zoom"; defaultValue=1.0; >;
 uniform float g_display_north_offset < source = "display_north_offset"; defaultValue=1.0; >;
 uniform bool g_virtual_display_enabled < source = "virtual_display_enabled"; defaultValue=false; >;
-uniform float g_frametime < source = "averageframetime"; >;
 uniform float g_lens_distance_ratio < source = "lens_distance_ratio"; defaultValue=0.025; >;
 uniform float4 imu_reset_data = float4(0, 0, 0, 1);
-uniform float4 g_date < source = "date"; >;
-uniform float4 g_keepalive_date < source = "keepalive_date"; >;
 uniform bool g_sbs_enabled < source = "sbs_enabled"; defaultValue=false; >;
 uniform bool g_sbs_content < source = "sbs_content"; defaultValue=false; >;
 uniform bool g_sbs_mode_stretched < source = "sbs_mode_stretched"; defaultValue=false; >;
 uniform bool g_custom_banner_enabled < source = "custom_banner_enabled"; defaultValue=false; >;
 
+// special uniform implementation from vkBasalt that tells us how old the imu data is
+uniform uint2 g_imu_data_age_ms < source = "timestamp_ms"; defaultValue=0; >;
+
 uniform uint day_in_seconds = 24 * 60 * 60;
 
 // cap look-ahead, beyond this it may get jittery and unusable
 #define LOOK_AHEAD_MS_CAP 45.0
+
+// 5 seconds
+#define IMU_DATA_STALENESS_THRESHOLD_MS 5000
 
 // attempt to figure out where the current position should be based on previous position, velocity, and acceleration.
 // velocity, accel, and time values should all use the same time units (secs, ms, etc...)
@@ -78,16 +81,10 @@ float3 rateOfChange(float3 v1, float3 v2, float delta_time) {
     return (v1-v2) / delta_time;
 }
 
-// super naive check, just make sure the times are within 5 seconds of each other, ignore year, month, day
-bool isKeepaliveRecent(float4 currentDate, float4 keepAliveDate)
-{
-    return abs((currentDate.w + day_in_seconds - keepAliveDate.w) % day_in_seconds) <= 5.0;
-}
-
 void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out float4 color : SV_Target)
 {
-    bool is_keepalive_valid = isKeepaliveRecent(g_date, g_keepalive_date);
-    bool shader_disabled = !g_virtual_display_enabled || !is_keepalive_valid;
+    bool is_imu_data_stale = g_imu_data_age_ms[0] > IMU_DATA_STALENESS_THRESHOLD_MS;
+    bool shader_disabled = !g_virtual_display_enabled || is_imu_data_stale;
     bool is_imu_reset_state = all(g_imu_quat_data[0] == imu_reset_data) && all(g_imu_quat_data[1] == imu_reset_data);
     float texcoord_x_min = 0.0;
     float texcoord_x_max = 1.0;
@@ -188,7 +185,7 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         float look_ahead_scanline_adjust = texcoord.y * g_look_ahead.z;
 
         // use the 4th value of the look-ahead config to cap the look-ahead value
-        float look_ahead_ms = min(min(g_look_ahead.x + g_frametime * g_look_ahead.y, g_look_ahead.w), LOOK_AHEAD_MS_CAP) + look_ahead_scanline_adjust;
+        float look_ahead_ms = min(min(g_look_ahead.x + g_imu_data_age_ms, g_look_ahead.w), LOOK_AHEAD_MS_CAP) + look_ahead_scanline_adjust;
         float look_ahead_ms_squared = pow(look_ahead_ms, 2);
 
         // apply most recent velocity and acceleration to most recent position to get a predicted position
