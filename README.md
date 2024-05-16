@@ -8,4 +8,4 @@ Sombrero provides ReShade FX and GLSL shader implementations for rendering a vir
 
 ## How does it work?
 
-The shader requires realt-time IMU data in the form of uniform variables, populated from a background application (e.g. my custom [vkBasalt fork](https://github.com/wheaney/vkBasalt) or [Breezy Desktop's](https://github.com/wheaney/breezy-desktop) GNOME extension).
+The shader requires real-time IMU data in the form of uniform variables, populated from a background application (e.g. my custom [vkBasalt fork](https://github.com/wheaney/vkBasalt) or [Breezy Desktop's](https://github.com/wheaney/breezy-desktop) GNOME extension).
