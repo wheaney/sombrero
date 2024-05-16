@@ -179,11 +179,14 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
         float texcoord_width = texcoord_x_max - texcoord_x_min;
         texcoord.x = texcoord.x * texcoord_width + texcoord_x_min;
 
-        if(looking_behind || texcoord.x < texcoord_x_min || texcoord.y < 0.0 || texcoord.x > texcoord_x_max || texcoord.y > 1.0 || texcoord.x <= 0.001 && texcoord.y <= 0.002) {
+        if(looking_behind || 
+           texcoord.x < texcoord_x_min + trim_width_percent || 
+           texcoord.y < trim_height_percent || 
+           texcoord.x > texcoord_x_max - trim_width_percent || 
+           texcoord.y > 1.0 - trim_height_percent || 
+           texcoord.x <= 0.001 && texcoord.y <= 0.002) {
             color = vec4(0, 0, 0, 1);
         } else {
-            texcoord.x = (1.0 - trim_width_percent * 2) * texcoord.x + trim_width_percent;
-            texcoord.y = (1.0 - trim_height_percent * 2) * texcoord.y + trim_height_percent;
             color = texture2D(uDesktopTexture, texcoord);
         }
     }
