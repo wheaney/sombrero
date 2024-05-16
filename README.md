@@ -4,8 +4,8 @@
 
 ## What is this?
 
-Sombrero is a [vkBasalt](https://github.com/DadSchoorse/vkBasalt) shader for rendering a virtual display with IMU head-tracking support. *Sombrero provides shade for your head. GET IT??!*
+Sombrero provides ReShade FX and GLSL shader implementations for rendering a virtual display with IMU head-tracking support. *Sombrero provides shade for your head. GET IT??!*
 
 ## How does it work?
 
-The shader reads IMU data from shared memory that can be written to by any IMU driver. In other words, this isn't tied to any specific device; anyone can write or modify a device driver to integrate with this shader with very little effort.
+The shader requires realt-time IMU data in the form of uniform variables, populated from a background application (e.g. my custom [vkBasalt fork](https://github.com/wheaney/vkBasalt) or [Breezy Desktop's](https://github.com/wheaney/breezy-desktop) GNOME extension).
