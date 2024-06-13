@@ -83,21 +83,24 @@ vec3 rateOfChange(
  *  * `a = a^2 + b^2`
  *  * `b = 2(ax + by)`
  *  * `c = (x^2 + y^2 - r^2)`
- * 
- * A vector inside a circle will always scale to hit the circle, so this will always return a valid result, given a positive
- * radius and vectorStart from inside the circle.
+ *
+ * A negative return value is a "looking away" result
  **/
 float getVectorScaleToCurve(float radius, vec2 vectorStart, vec2 lookVector) {
     float a = pow(lookVector.x, 2) + pow(lookVector.y, 2);
     float b = 2 * (lookVector.x * vectorStart.x + lookVector.y * vectorStart.y);
     float c = pow(vectorStart.x, 2) + pow(vectorStart.y, 2) - pow(radius, 2);
 
-    // most quadratic functions would check the discriminant before sqrt(), but we know it will be positive given our usage
-    float sqrtDiscriminant = sqrt(pow(b, 2) - 4 * a * c);
-    float scale1 = (-b + sqrtDiscriminant) / (2 * a);
-    if (scale1 >= 0) return scale1;
+    float discriminant = pow(b, 2) - 4 * a * c;
+    if (discriminant < 0.0) return -1.0;
 
-    return (-b - sqrtDiscriminant) / (2 * a);
+    float sqrtDiscriminant = sqrt(discriminant);
+
+    // return positive or largest, if both positive
+    return max(
+        (-b + sqrtDiscriminant) / (2 * a),
+        (-b - sqrtDiscriminant) / (2 * a)
+    );
 }
 
 void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
@@ -196,14 +199,14 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
         vec3 res = applyLookAhead(rotated_vector_t0, velocity_t0, accel_t0, look_ahead_ms, look_ahead_ms_squared) -
             rotated_lens_vector;
 
-        bool looking_behind = res.x < 0.0;
+        bool looking_away = res.x < 0.0;
 
+        float display_distance = display_north_offset - rotated_lens_vector.x;
         if (!curved_display) {
             // flat display
 
             // divide all values by x to scale the magnitude so x is exactly 1, and multiply by the final display distance
             // so the vector is pointing at a coordinate on the screen
-            float display_distance = display_north_offset - rotated_lens_vector.x;
             res *= display_distance / res.x;
             res += rotated_lens_vector;
 
@@ -217,11 +220,12 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
             float radius = display_size;
 
             // position ourselves within the circle's radius based on desired display distance
-            float display_distance = min(radius * 1.9, display_north_offset) - rotated_lens_vector.x;
             vec2 vectorStart = vec2(radius - display_distance, rotated_lens_vector.y);
 
             // scale the vector to the length needed to reach the curved display, then add the lens offsets back on
-            res *= getVectorScaleToCurve(radius, vectorStart, res.xy);
+            float scale = getVectorScaleToCurve(radius, vectorStart, res.xy);
+            if (scale <= 0.0) looking_away = true;
+            res *= scale;
             res += vec3(vectorStart.x, vectorStart.y, rotated_lens_vector.z);
 
             // we know exactly how many radians of the circle is covered by a single display's horizontal FOV,
@@ -253,7 +257,7 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
         }
         texcoord += texcoord_center;
 
-        if(looking_behind || 
+        if(looking_away || 
            texcoord.x < texcoord_x_min + trim_width_percent || 
            texcoord.y < trim_height_percent || 
            texcoord.x > texcoord_x_max - trim_width_percent || 
