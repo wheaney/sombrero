@@ -49,10 +49,10 @@ uniform uint day_in_seconds = 24 * 60 * 60;
 // cap look-ahead, beyond this it may get jittery and unusable
 #define LOOK_AHEAD_MS_CAP 45.0
 
-// attempt to figure out where the current position should be based on previous position, velocity, and acceleration.
-// velocity, accel, and time values should all use the same time units (secs, ms, etc...)
-float3 applyLookAhead(float3 position, float3 velocity, float3 accel, float t, float t_squared) {
-    return position + velocity * t + 0.5 * accel * t_squared;
+// attempt to figure out where the current position should be based on previous position and velocity.
+// velocity and time values should use the same time units (secs, ms, etc...)
+float3 applyLookAhead(float3 position, float3 velocity, float t) {
+    return position + velocity * t;
 }
 
 float4 quatMul(float4 q1, float4 q2) {
@@ -167,27 +167,20 @@ void PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out 
         // then rotate the vector using each of the snapshots provided
         float3 rotated_vector_t0 = applyQuaternionToVector(g_imu_quat_data[0], texcoord_vector);
         float3 rotated_vector_t1 = applyQuaternionToVector(g_imu_quat_data[1], texcoord_vector);
-        float3 rotated_vector_t2 = applyQuaternionToVector(g_imu_quat_data[2], texcoord_vector);
         float3 rotated_lens_vector = applyQuaternionToVector(g_imu_quat_data[0], lens_vector);
 
-        // compute the two velocities (units/ms) as change in the 3 rotation snapshots
+        // compute the velocity (units/ms) as change in the rotation snapshots
         float delta_time_t0 = g_imu_quat_data[3].x - g_imu_quat_data[3].y;
         float3 velocity_t0 = rateOfChange(rotated_vector_t0, rotated_vector_t1, delta_time_t0);
-        float3 velocity_t1 = rateOfChange(rotated_vector_t1, rotated_vector_t2, g_imu_quat_data[3].y-g_imu_quat_data[3].z);
-
-        // and then the acceleration (units/ms^2) as the change in velocities
-        float3 accel_t0 = rateOfChange(velocity_t0, velocity_t1, delta_time_t0);
 
         // allows for the bottom and top of the screen to have different look-ahead values
         float look_ahead_scanline_adjust = texcoord.y * g_look_ahead.z;
 
         // use the 4th value of the look-ahead config to cap the look-ahead value
         float look_ahead_ms = min(min(g_look_ahead.x + g_frametime * g_look_ahead.y, g_look_ahead.w), LOOK_AHEAD_MS_CAP) + look_ahead_scanline_adjust;
-        float look_ahead_ms_squared = pow(look_ahead_ms, 2);
 
         // apply most recent velocity and acceleration to most recent position to get a predicted position
-        float3 res = applyLookAhead(rotated_vector_t0, velocity_t0, accel_t0, look_ahead_ms, look_ahead_ms_squared) - 
-                        rotated_lens_vector;
+        float3 res = applyLookAhead(rotated_vector_t0, velocity_t0, look_ahead_ms) - rotated_lens_vector;
 
         bool looking_behind = res.x < 0;
 
