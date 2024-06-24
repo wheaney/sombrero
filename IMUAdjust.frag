@@ -46,14 +46,11 @@ vec3 applyQuaternionToVector(vec4 q, vec3 v) {
 
 const int day_in_seconds = 24 * 60 * 60;
 
-vec3 applyLookAhead(
-    in vec3 position,
-    in vec3 velocity,
-    in vec3 accel,
-    in float t,
-    in float t_squared
+// attempt to figure out where the current position should be based on previous position and velocity.
+// velocity and time values should use the same time units (secs, ms, etc...)
+vec3 applyLookAhead(vec3 position, vec3 velocity, float t
 ) {
-    return position + velocity * t + 0.5 * accel * t_squared;
+    return position + velocity * t;
 }
 
 vec3 rateOfChange(
@@ -180,24 +177,18 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
         vec3 rotated_vector_t2 = applyQuaternionToVector(imu_quat_data[2], texcoord_vector);
         vec3 rotated_lens_vector = applyQuaternionToVector(imu_quat_data[0], lens_vector);
 
-        // compute the two velocities (units/ms) as change in the 3 rotation snapshots
+        // compute the velocity (units/ms) as change in the rotation snapshots
         float delta_time_t0 = imu_quat_data[3].x - imu_quat_data[3].y;
         vec3 velocity_t0 = rateOfChange(rotated_vector_t0, rotated_vector_t1, delta_time_t0);
-        vec3 velocity_t1 = rateOfChange(rotated_vector_t1, rotated_vector_t2, imu_quat_data[3].y - imu_quat_data[3].z);
-
-        // and then the acceleration (units/ms^2) as the change in velocities
-        vec3 accel_t0 = rateOfChange(velocity_t0, velocity_t1, delta_time_t0);
 
         // allows for the bottom and top of the screen to have different look-ahead values
         float look_ahead_scanline_adjust = texcoord.y * look_ahead_cfg.z;
 
         // use the 4th value of the look-ahead config to cap the look-ahead value
         float look_ahead_ms_capped = min(min(look_ahead_ms, look_ahead_cfg.w), look_ahead_ms_cap) + look_ahead_scanline_adjust;
-        float look_ahead_ms_squared = pow(look_ahead_ms_capped, 2);
 
         // apply most recent velocity and acceleration to most recent position to get a predicted position
-        vec3 res = applyLookAhead(rotated_vector_t0, velocity_t0, accel_t0, look_ahead_ms, look_ahead_ms_squared) -
-            rotated_lens_vector;
+        vec3 res = applyLookAhead(rotated_vector_t0, velocity_t0, look_ahead_ms_capped) - rotated_lens_vector;
 
         bool looking_away = res.x < 0.0;
 
