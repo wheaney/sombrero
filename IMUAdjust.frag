@@ -23,6 +23,10 @@ uniform float half_fov_y_rads;
 uniform vec2 source_resolution;
 uniform vec2 display_resolution;
 uniform bool curved_display;
+uniform float display_x_start;
+uniform float display_x_end;
+uniform float display_y_start;
+uniform float display_y_end;
 
 vec2 banner_position = vec2(0.5, 0.9);
 float look_ahead_ms_cap = 45.0;
@@ -48,16 +52,11 @@ const int day_in_seconds = 24 * 60 * 60;
 
 // attempt to figure out where the current position should be based on previous position and velocity.
 // velocity and time values should use the same time units (secs, ms, etc...)
-vec3 applyLookAhead(vec3 position, vec3 velocity, float t
-) {
+vec3 applyLookAhead(vec3 position, vec3 velocity, float t) {
     return position + velocity * t;
 }
 
-vec3 rateOfChange(
-    in vec3 v1,
-    in vec3 v2,
-    in float delta_time
-) {
+vec3 rateOfChange(vec3 v1, vec3 v2, float delta_time) {
     return (v1 - v2) / delta_time;
 }
 
@@ -101,13 +100,26 @@ float getVectorScaleToCurve(float radius, vec2 vectorStart, vec2 lookVector) {
 }
 
 void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
-    float texcoord_x_min = 0.0;
-    float texcoord_x_max = 1.0;
+    if(texcoord.x < display_x_start || 
+       texcoord.y < display_y_start || 
+       texcoord.x > display_x_end || 
+       texcoord.y > display_y_end) {
+        // this part of the desktop is shown on other monitors, just render them as normal
+        color = texture2D(uDesktopTexture, texcoord);
+    }
+
+    float texcoord_x_min = display_x_start;
+    float texcoord_x_max = display_x_end;
+    float texcoord_y_min = display_y_start;
+    float texcoord_y_max = display_y_end;
     float lens_y_offset = 0.0;
     float lens_z_offset = 0.0;
 
+    float texcoord_width = texcoord_x_max - texcoord_x_min;
+    float texcoord_height = texcoord_y_max - texcoord_y_min;
     if(enabled && sbs_enabled) {
-        bool right_display = texcoord.x > 0.5;
+        float texcoord_x_middle = texcoord_x_min + texcoord_width / 2.0f;
+        bool right_display = texcoord.x > texcoord_x_middle;
 
         lens_y_offset = lens_distance_ratio / 3;
         if(right_display)
@@ -115,19 +127,25 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
         if(sbs_content) {
             // source video is SBS, left-half of the screen goes to the left lens, right-half to the right lens
             if(right_display)
-                texcoord_x_min = 0.5;
+                texcoord_x_min = texcoord_x_middle;
             else
-                texcoord_x_max = 0.5;
+                texcoord_x_max = texcoord_x_middle;
+
+            texcoord_width /= 2.0f;
         }
         if(!sbs_mode_stretched) {
             // if the content isn't stretched, assume it's centered in the middle 50% of the screen
-            texcoord_x_min = max(0.25, texcoord_x_min);
-            texcoord_x_max = min(0.75, texcoord_x_max);
+            texcoord_x_min = max(texcoord_x_min + texcoord_width * 0.25, texcoord_x_min);
+            texcoord_x_max = min(texcoord_x_min + texcoord_width * 0.75, texcoord_x_max);
+            texcoord_width = texcoord_x_max - texcoord_x_min;
         }
 
         // translate the texcoord respresenting the current lens's half of the screen to a full-screen texcoord
-        texcoord.x = (texcoord.x - (right_display ? 0.5 : 0.0)) * 2;
+        texcoord.x = (texcoord.x - (right_display ? texcoord_x_middle : texcoord_x_min)) * 2;
+    } else {
+        texcoord.x = (texcoord.x - texcoord_x_min) / texcoord_width;
     }
+    texcoord.y = (texcoord.y - texcoord_y_min) / texcoord_height;
 
     if(!enabled || show_banner) {
         bool banner_shown = false;
@@ -154,9 +172,9 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
         }
         
         if (!banner_shown) {
-            // adjust texcoord back to the range that describes where the content is displayed
-            float texcoord_width = texcoord_x_max - texcoord_x_min;
+            // translate the texcoord back to where it is on the desktop texture
             texcoord.x = texcoord.x * texcoord_width + texcoord_x_min;
+            texcoord.y = texcoord.y * texcoord_height + texcoord_y_min;
 
             color = texture2D(uDesktopTexture, texcoord);
         }
@@ -174,7 +192,6 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
         // then rotate the vector using each of the snapshots provided
         vec3 rotated_vector_t0 = applyQuaternionToVector(imu_quat_data[0], texcoord_vector);
         vec3 rotated_vector_t1 = applyQuaternionToVector(imu_quat_data[1], texcoord_vector);
-        vec3 rotated_vector_t2 = applyQuaternionToVector(imu_quat_data[2], texcoord_vector);
         vec3 rotated_lens_vector = applyQuaternionToVector(imu_quat_data[0], lens_vector);
 
         // compute the velocity (units/ms) as change in the rotation snapshots
@@ -230,12 +247,12 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
         // screens are always flat in the vertical direction, so this is the same for curved and flat cases
         texcoord.y = (fov_z_half_width - res.z) / fov_z_width;
 
-        // apply the texture offsets now
-        float texcoord_width = texcoord_x_max - texcoord_x_min;
+        // translate the texcoord back to where it is on the desktop texture
         texcoord.x = texcoord.x * texcoord_width + texcoord_x_min;
+        texcoord.y = texcoord.y * texcoord_height + texcoord_y_min;
 
         // scale/zoom operations must always be done around the center
-        vec2 texcoord_center = vec2(texcoord_x_min + texcoord_width/2.0f, 0.5f);
+        vec2 texcoord_center = vec2(texcoord_x_min + texcoord_width/2.0f, texcoord_y_min + texcoord_height/2.0f);
         texcoord -= texcoord_center;
         if (!curved_display) {
             // scale the coordinates from aspect ratio of display to the aspect ratio of the source texture
@@ -250,10 +267,10 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
 
         if(looking_away || 
            texcoord.x < texcoord_x_min + trim_width_percent || 
-           texcoord.y < trim_height_percent || 
+           texcoord.y < texcoord_y_min + trim_height_percent || 
            texcoord.x > texcoord_x_max - trim_width_percent || 
-           texcoord.y > 1.0 - trim_height_percent || 
-           texcoord.x <= 0.001 && texcoord.y <= 0.002) {
+           texcoord.y > texcoord_y_max - trim_height_percent || 
+           texcoord.x <= 0.001 * texcoord_x_min && texcoord.y <= 0.002 * texcoord_y_min) {
             color = vec4(0, 0, 0, 1);
         } else {
             color = texture2D(uDesktopTexture, texcoord);
