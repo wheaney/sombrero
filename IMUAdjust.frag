@@ -174,7 +174,6 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
         // then rotate the vector using each of the snapshots provided
         vec3 rotated_vector_t0 = applyQuaternionToVector(imu_quat_data[0], texcoord_vector);
         vec3 rotated_vector_t1 = applyQuaternionToVector(imu_quat_data[1], texcoord_vector);
-        vec3 rotated_vector_t2 = applyQuaternionToVector(imu_quat_data[2], texcoord_vector);
         vec3 rotated_lens_vector = applyQuaternionToVector(imu_quat_data[0], lens_vector);
 
         // compute the velocity (units/ms) as change in the rotation snapshots
