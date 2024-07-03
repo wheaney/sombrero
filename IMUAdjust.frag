@@ -11,17 +11,20 @@ uniform vec4 look_ahead_cfg;
 uniform float look_ahead_ms;
 uniform float display_size;
 uniform float display_north_offset;
-uniform float lens_distance_ratio;
+uniform vec3 lens_vector;
+uniform vec3 lens_vector_r;
+uniform vec2 texcoord_x_limits;
+uniform vec2 texcoord_x_limits_r;
 uniform bool sbs_enabled;
-uniform bool sbs_content;
-uniform bool sbs_mode_stretched;
 uniform bool custom_banner_enabled;
 uniform float trim_width_percent;
 uniform float trim_height_percent;
 uniform float half_fov_z_rads;
 uniform float half_fov_y_rads;
-uniform vec2 source_resolution;
+uniform vec2 fov_half_widths;
+uniform vec2 fov_widths;
 uniform vec2 display_resolution;
+uniform vec2 source_to_display_ratio;
 uniform bool curved_display;
 
 vec2 banner_position = vec2(0.5, 0.9);
@@ -101,33 +104,20 @@ float getVectorScaleToCurve(float radius, vec2 vectorStart, vec2 lookVector) {
 }
 
 void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
-    float texcoord_x_min = 0.0;
-    float texcoord_x_max = 1.0;
-    float lens_y_offset = 0.0;
-    float lens_z_offset = 0.0;
+    vec2 effective_x_limits = texcoord_x_limits;
+    vec3 effective_lens_vector = lens_vector;
 
     if(enabled && sbs_enabled) {
         bool right_display = texcoord.x > 0.5;
-
-        lens_y_offset = lens_distance_ratio / 3;
-        if(right_display)
-            lens_y_offset = -lens_y_offset;
-        if(sbs_content) {
-            // source video is SBS, left-half of the screen goes to the left lens, right-half to the right lens
-            if(right_display)
-                texcoord_x_min = 0.5;
-            else
-                texcoord_x_max = 0.5;
-        }
-        if(!sbs_mode_stretched) {
-            // if the content isn't stretched, assume it's centered in the middle 50% of the screen
-            texcoord_x_min = max(0.25, texcoord_x_min);
-            texcoord_x_max = min(0.75, texcoord_x_max);
+        if(right_display) {
+            effective_x_limits = texcoord_x_limits_r;
+            effective_lens_vector = lens_vector_r;
         }
 
         // translate the texcoord respresenting the current lens's half of the screen to a full-screen texcoord
         texcoord.x = (texcoord.x - (right_display ? 0.5 : 0.0)) * 2;
     }
+    float texcoord_width = effective_x_limits.y - effective_x_limits.x;
 
     if(!enabled || show_banner) {
         bool banner_shown = false;
@@ -155,26 +145,19 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
         
         if (!banner_shown) {
             // adjust texcoord back to the range that describes where the content is displayed
-            float texcoord_width = texcoord_x_max - texcoord_x_min;
-            texcoord.x = texcoord.x * texcoord_width + texcoord_x_min;
+            texcoord.x = texcoord.x * texcoord_width + effective_x_limits.x;
 
             color = texture2D(uDesktopTexture, texcoord);
         }
-    } else {
-        float fov_y_half_width = tan(half_fov_y_rads);
-        float fov_y_width = fov_y_half_width * 2;
-        float fov_z_half_width = tan(half_fov_z_rads);
-        float fov_z_width = fov_z_half_width * 2;
-        
-        float vec_y = -texcoord.x * fov_y_width + fov_y_half_width;
-        float vec_z = -texcoord.y * fov_z_width + fov_z_half_width;
-        vec3 lens_vector = vec3(lens_distance_ratio, lens_y_offset, lens_z_offset);
+    } else {        
+        float vec_y = -texcoord.x * fov_widths.x + fov_half_widths.x;
+        float vec_z = -texcoord.y * fov_widths.y + fov_half_widths.y;
         vec3 texcoord_vector = vec3(1.0, vec_y, vec_z);
 
         // then rotate the vector using each of the snapshots provided
         vec3 rotated_vector_t0 = applyQuaternionToVector(imu_quat_data[0], texcoord_vector);
         vec3 rotated_vector_t1 = applyQuaternionToVector(imu_quat_data[1], texcoord_vector);
-        vec3 rotated_lens_vector = applyQuaternionToVector(imu_quat_data[0], lens_vector);
+        vec3 rotated_lens_vector = applyQuaternionToVector(imu_quat_data[0], effective_lens_vector);
 
         // compute the velocity (units/ms) as change in the rotation snapshots
         float delta_time_t0 = imu_quat_data[3].x - imu_quat_data[3].y;
@@ -202,7 +185,7 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
 
             // deconstruct the rotated and scaled vector back to a texcoord (just inverse operations of the first conversion
             // above)
-            texcoord.x = (fov_y_half_width - res.y) / fov_y_width;
+            texcoord.x = (fov_half_widths.x - res.y) / fov_widths.x;
         } else {
             // curved display
 
@@ -221,36 +204,33 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
             // we know exactly how many radians of the circle is covered by a single display's horizontal FOV,
             // so texcoord.x is just converting our vector.xy to radians and figuring out the percentage of the total 
             // FOV of all virtual displays
-            float fov_y = half_fov_y_rads * 2 * source_resolution.x / display_resolution.x;
+            float fov_y = half_fov_y_rads * 2 * source_to_display_ratio.x;
             float res_y_rads = (fov_y / 2) - atan(res.y, res.x);
             texcoord.x = res_y_rads / fov_y;
         }
 
         // screens are always flat in the vertical direction, so this is the same for curved and flat cases
-        texcoord.y = (fov_z_half_width - res.z) / fov_z_width;
+        texcoord.y = (fov_half_widths.y - res.z) / fov_widths.y;
 
         // apply the texture offsets now
-        float texcoord_width = texcoord_x_max - texcoord_x_min;
-        texcoord.x = texcoord.x * texcoord_width + texcoord_x_min;
+        texcoord.x = texcoord.x * texcoord_width + effective_x_limits.x;
 
         // scale/zoom operations must always be done around the center
-        vec2 texcoord_center = vec2(texcoord_x_min + texcoord_width/2.0f, 0.5f);
+        vec2 texcoord_center = vec2(effective_x_limits.x + texcoord_width/2.0f, 0.5f);
         texcoord -= texcoord_center;
         if (!curved_display) {
             // scale the coordinates from aspect ratio of display to the aspect ratio of the source texture
-            texcoord *= vec2(display_resolution.x / source_resolution.x, display_resolution.y / source_resolution.y);
-            // apply the zoom
-            texcoord /= display_size;
+            texcoord /= source_to_display_ratio * display_size;
         } else {
             // curved radius-based logic only applied horizontally, so only y needs scaling
-            texcoord.y /= display_size * source_resolution.y / display_resolution.y;
+            texcoord.y /= source_to_display_ratio.y * display_size;
         }
         texcoord += texcoord_center;
 
         if(looking_away || 
-           texcoord.x < texcoord_x_min + trim_width_percent || 
+           texcoord.x < effective_x_limits.x + trim_width_percent || 
            texcoord.y < trim_height_percent || 
-           texcoord.x > texcoord_x_max - trim_width_percent || 
+           texcoord.x > effective_x_limits.y - trim_width_percent || 
            texcoord.y > 1.0 - trim_height_percent || 
            texcoord.x <= 0.001 && texcoord.y <= 0.002) {
             color = vec4(0, 0, 0, 1);
