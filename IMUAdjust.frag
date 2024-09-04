@@ -1,67 +1,119 @@
-#version 330 core
+// Detect if we're in ReShade or GLSL environment
+#if defined(__RESHADE__) || defined(__RESHADEFX__)
+    #include "ReShade.fxh"
 
-uniform sampler2D uDesktopTexture;
-uniform sampler2D uCalibratingTexture;
-uniform sampler2D uCustomBannerTexture;
+    #define RESHADE 1
+    
+    #define SAMPLE_TEXTURE(name, coord) tex2D(name, coord)
+    #define DECLARE_UNIFORM(type, name, annotation) uniform type name annotation
 
-uniform bool enabled;
-uniform bool show_banner;
-uniform mat4 imu_quat_data;
-uniform vec4 look_ahead_cfg;
-uniform float look_ahead_ms;
-uniform float display_size;
-uniform float display_north_offset;
-uniform vec3 lens_vector;
-uniform vec3 lens_vector_r;
-uniform vec2 texcoord_x_limits;
-uniform vec2 texcoord_x_limits_r;
-uniform bool sbs_enabled;
-uniform bool custom_banner_enabled;
-uniform float trim_width_percent;
-uniform float trim_height_percent;
-uniform float half_fov_z_rads;
-uniform float half_fov_y_rads;
-uniform vec2 fov_half_widths;
-uniform vec2 fov_widths;
-uniform vec2 display_resolution;
-uniform vec2 source_to_display_ratio;
-uniform bool curved_display;
+    uniform sampler screenTexture = ReShade::BackBuffer;
+    texture2D calibratingImage < source = "calibrating.png"; > {
+        Width = 800;
+        Height = 200;
+    };
+    sampler2D calibratingSampler {
+        Texture = calibratingImage;
+    };
+    texture2D customBannerImage < source = "custom_banner.png"; > {
+        Width = 800;
+        Height = 200;
+    };
+    sampler2D customBannerSampler {
+        Texture = customBannerImage;
+    };
+#else
+    #define RESHADE 0
 
-vec2 banner_position = vec2(0.5, 0.9);
-float look_ahead_ms_cap = 45.0;
+    #define float float
+    #define float2 vec2
+    #define float3 vec3
+    #define float4 vec4
+    #define float2x2 mat2
+    #define float3x3 mat3
+    #define float4x4 mat4
+    #define uint uint
+    #define uint2 uvec2
+    #define uint3 uvec3
+    #define uint4 uvec4
 
-vec4 quatMul(vec4 q1, vec4 q2) {
-    vec3 u = vec3(q1.x, q1.y, q1.z);
+    #define SAMPLE_TEXTURE(name, coord) texture2D(name, coord)
+    #define DECLARE_UNIFORM(type, name, annotation) uniform type name
+
+    uniform sampler2D screenTexture;
+    uniform sampler2D calibratingTexture;
+    uniform sampler2D customBannerTexture;
+#endif
+
+DECLARE_UNIFORM(bool, virtual_display_enabled, < source = "virtual_display_enabled"; defaultValue=false; >);
+DECLARE_UNIFORM(float4x4, imu_quat_data, < source = "imu_quat_data"; defaultValue=float4x4(
+    0.0,    0.0,    0.0,    0.0, // quat snapshot at t0
+    0.0,    0.0,    0.0,    0.0, // quat snapshot at t1 (for velocity 1)
+    0.0,    0.0,    0.0,    0.0, // quat snapshot at t2 (for velocity 2, accel 1)
+    0.0,    0.0,    0.0,    0.0  // timestamps for t0, t1, and t2, last value is unused
+); >);
+DECLARE_UNIFORM(float4, look_ahead_cfg, < source = "look_ahead_cfg"; defaultValue=float4(0.0, 0.0, 0.0, 0.0); >);
+DECLARE_UNIFORM(float2, display_resolution, < source = "display_resolution"; defaultValue=float2(1920, 1080); >);
+DECLARE_UNIFORM(float2, source_to_display_ratio, < source = "source_to_display_ratio"; defaultValue=float2(1.0, 1.0); >);
+DECLARE_UNIFORM(float, display_size, < source = "display_zoom"; defaultValue=1.0; >);
+DECLARE_UNIFORM(float, display_north_offset, < source = "display_north_offset"; defaultValue=1.0; >);
+DECLARE_UNIFORM(float3, lens_vector, < source = "lens_vector"; defaultValue=float3(1.0, 0.0, 0.0); >);
+DECLARE_UNIFORM(float3, lens_vector_r, < source = "lens_vector_r"; defaultValue=float3(1.0, 0.0, 0.0); >);
+DECLARE_UNIFORM(float2, texcoord_x_limits, < source = "texcoord_x_limits"; defaultValue=float2(0.0, 1.0); >);
+DECLARE_UNIFORM(float2, texcoord_x_limits_r, < source = "texcoord_x_limits_r"; defaultValue=float2(0.0, 1.0); >);
+DECLARE_UNIFORM(bool, show_banner, < source = "show_banner"; defaultValue=false; >);
+DECLARE_UNIFORM(float, frametime, < source = "frametime"; >);
+DECLARE_UNIFORM(float, look_ahead_ms, < source = "look_ahead_ms"; defaultValue=0.0; >);
+DECLARE_UNIFORM(float4, date, < source = "date"; >);
+DECLARE_UNIFORM(float4, keepalive_date, < source = "keepalive_date"; defaultValue=float4(0, 0, 0, 0); >);
+DECLARE_UNIFORM(bool, sbs_enabled, < source = "sbs_enabled"; defaultValue=false; >);
+DECLARE_UNIFORM(bool, custom_banner_enabled, < source = "custom_banner_enabled"; defaultValue=false; >);
+DECLARE_UNIFORM(float2, trim_percent, < source = "trim_percent"; defaultValue=float2(0.0, 0.0); >);
+DECLARE_UNIFORM(bool, curved_display, < source = "curved_display"; defaultValue=false; >);
+
+// FOV defaults based on 46 degree diagonal
+DECLARE_UNIFORM(float, half_fov_z_rads, < source = "half_fov_z_rads"; defaultValue=0.1968; >);
+DECLARE_UNIFORM(float, half_fov_y_rads, < source = "half_fov_y_rads"; defaultValue=0.34987; >);
+DECLARE_UNIFORM(float2, fov_half_widths, < source = "fov_half_widths"; defaultValue=float2(0.34987, 0.1968); >);
+DECLARE_UNIFORM(float2, fov_widths, < source = "fov_widths"; defaultValue=float2(0.34987, 0.1968); >);
+
+uniform float4 imu_reset_data = float4(0.0, 0.0, 0.0, 1.0);
+uniform float2 banner_position = float2(0.5, 0.9);
+uniform float look_ahead_ms_cap = 45.0;
+uniform float day_in_seconds = 24 * 60 * 60;
+
+float4 quatMul(float4 q1, float4 q2) {
+    float3 u = float3(q1.x, q1.y, q1.z);
     float s = q1.w;
-    vec3 v = vec3(q2.x, q2.y, q2.z);
+    float3 v = float3(q2.x, q2.y, q2.z);
     float t = q2.w;
-    return vec4(s * v + t * u + cross(u, v), s * t - dot(u, v));
+    return float4(s*v + t*u + cross(u, v), s*t - dot(u, v));
 }
 
-vec4 quatConj(vec4 q) {
-    return vec4(-q.x, -q.y, -q.z, q.w);
+float4 quatConj(float4 q) {
+    return float4(-q.x, -q.y, -q.z, q.w);
 }
 
-vec3 applyQuaternionToVector(vec4 q, vec3 v) {
-    vec4 p = quatMul(quatMul(q, vec4(v, 0)), quatConj(q));
+float3 applyQuaternionToVector(float4 q, float3 v) {
+    float4 p = quatMul(quatMul(q, float4(v, 0)), quatConj(q));
     return p.xyz;
 }
 
-const int day_in_seconds = 24 * 60 * 60;
-
 // attempt to figure out where the current position should be based on previous position and velocity.
 // velocity and time values should use the same time units (secs, ms, etc...)
-vec3 applyLookAhead(vec3 position, vec3 velocity, float t
-) {
+float3 applyLookAhead(float3 position, float3 velocity, float t) {
     return position + velocity * t;
 }
 
-vec3 rateOfChange(
-    in vec3 v1,
-    in vec3 v2,
-    in float delta_time
-) {
-    return (v1 - v2) / delta_time;
+// returns the rate of change between the two vectors, in same time units as delta_time
+// e.g. if delta_time is in ms, then the rate of change is "per ms"
+float3 rateOfChange(float3 v1, float3 v2, float delta_time) {
+    return (v1-v2) / delta_time;
+}
+
+// super naive check, just make sure the times are within 5 seconds of each other, ignore year, month, day
+bool isKeepaliveRecent(float4 currentDate, float4 keepAliveDate) {
+    return abs(mod(currentDate.w + day_in_seconds - keepAliveDate.w, day_in_seconds)) <= 5.0;
 }
 
 /**
@@ -86,7 +138,7 @@ vec3 rateOfChange(
  *
  * A negative return value is a "looking away" result
  **/
-float getVectorScaleToCurve(float radius, vec2 vectorStart, vec2 lookVector) {
+float getVectorScaleToCurve(float radius, float2 vectorStart, float2 lookVector) {
     float a = pow(lookVector.x, 2) + pow(lookVector.y, 2);
     float b = 2 * (lookVector.x * vectorStart.x + lookVector.y * vectorStart.y);
     float c = pow(vectorStart.x, 2) + pow(vectorStart.y, 2) - pow(radius, 2);
@@ -103,12 +155,13 @@ float getVectorScaleToCurve(float radius, vec2 vectorStart, vec2 lookVector) {
     );
 }
 
-void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
-    vec2 effective_x_limits = texcoord_x_limits;
-    vec3 effective_lens_vector = lens_vector;
+void PS_IMU_Transform(float2 texcoord, out float4 color) {
+    float2 effective_x_limits = texcoord_x_limits;
+    float3 effective_lens_vector = lens_vector;
 
-    if(enabled && sbs_enabled) {
+    if (sbs_enabled && virtual_display_enabled) {
         bool right_display = texcoord.x > 0.5;
+
         if(right_display) {
             effective_x_limits = texcoord_x_limits_r;
             effective_lens_vector = lens_vector_r;
@@ -119,26 +172,26 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
     }
     float texcoord_width = effective_x_limits.y - effective_x_limits.x;
 
-    if(!enabled || show_banner) {
+    if (virtual_display_enabled || show_banner) {
         bool banner_shown = false;
         if (show_banner) {
-            vec2 banner_size = vec2(800.0 / display_resolution.x, 200.0 / display_resolution.y);
+            float2 banner_size = float2(800.0, 200.0) / display_resolution;
 
             // if the banner width is greater than the sreen width, scale it down
             banner_size /= max(banner_size.x, 1.1);
 
-            vec2 banner_start = banner_position - banner_size / 2;
+            float2 banner_start = banner_position - banner_size / 2;
 
             // if the banner would extend too close or past the bottom edge of the screen, apply some padding
             banner_start.y = min(banner_start.y, 0.95 - banner_size.y);
 
-            vec2 banner_texcoord = (texcoord - banner_start) / banner_size;
+            float2 banner_texcoord = (texcoord - banner_start) / banner_size;
             if (banner_texcoord.x >= 0.0 && banner_texcoord.x <= 1.0 && banner_texcoord.y >= 0.0 && banner_texcoord.y <= 1.0) {
                 banner_shown = true;
                 if (custom_banner_enabled) {
-                    color = texture2D(uCustomBannerTexture, banner_texcoord);
+                    color = SAMPLE_TEXTURE(customBannerTexture, banner_texcoord);
                 } else {
-                    color = texture2D(uCalibratingTexture, banner_texcoord);
+                    color = SAMPLE_TEXTURE(calibratingTexture, banner_texcoord);
                 }
             }
         }
@@ -147,33 +200,37 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
             // adjust texcoord back to the range that describes where the content is displayed
             texcoord.x = texcoord.x * texcoord_width + effective_x_limits.x;
 
-            color = texture2D(uDesktopTexture, texcoord);
+            color = SAMPLE_TEXTURE(screenTexture, texcoord);
         }
-    } else {        
+    } else { 
         float vec_y = -texcoord.x * fov_widths.x + fov_half_widths.x;
         float vec_z = -texcoord.y * fov_widths.y + fov_half_widths.y;
-        vec3 texcoord_vector = vec3(1.0, vec_y, vec_z);
+        float3 texcoord_vector = float3(1.0, vec_y, vec_z);
 
         // then rotate the vector using each of the snapshots provided
-        vec3 rotated_vector_t0 = applyQuaternionToVector(imu_quat_data[0], texcoord_vector);
-        vec3 rotated_vector_t1 = applyQuaternionToVector(imu_quat_data[1], texcoord_vector);
-        vec3 rotated_lens_vector = applyQuaternionToVector(imu_quat_data[0], effective_lens_vector);
+        float3 rotated_vector_t0 = applyQuaternionToVector(imu_quat_data[0], texcoord_vector);
+        float3 rotated_vector_t1 = applyQuaternionToVector(imu_quat_data[1], texcoord_vector);
+        float3 rotated_lens_vector = applyQuaternionToVector(imu_quat_data[0], effective_lens_vector);
 
         // compute the velocity (units/ms) as change in the rotation snapshots
         float delta_time_t0 = imu_quat_data[3].x - imu_quat_data[3].y;
-        vec3 velocity_t0 = rateOfChange(rotated_vector_t0, rotated_vector_t1, delta_time_t0);
+        float3 velocity_t0 = rateOfChange(rotated_vector_t0, rotated_vector_t1, delta_time_t0);
+
+        // look_ahead can be hardcoded by look_ahead_ms, otherwise calculate it based on the frametime
+        float effective_look_ahead_ms = look_ahead_ms;
+        if (look_ahead_ms == 0.0) effective_look_ahead_ms = look_ahead_cfg.x + frametime * look_ahead_cfg.y;
 
         // allows for the bottom and top of the screen to have different look-ahead values
         float look_ahead_scanline_adjust = texcoord.y * look_ahead_cfg.z;
 
         // use the 4th value of the look-ahead config to cap the look-ahead value
-        float look_ahead_ms_capped = min(min(look_ahead_ms, look_ahead_cfg.w), look_ahead_ms_cap) + look_ahead_scanline_adjust;
+        float look_ahead_ms_capped = min(min(effective_look_ahead_ms, look_ahead_cfg.w), look_ahead_ms_cap) + look_ahead_scanline_adjust;
 
         // apply most recent velocity and acceleration to most recent position to get a predicted position
-        vec3 res = applyLookAhead(rotated_vector_t0, velocity_t0, look_ahead_ms_capped) - rotated_lens_vector;
+        float3 res = applyLookAhead(rotated_vector_t0, velocity_t0, look_ahead_ms_capped) - rotated_lens_vector;
 
         bool looking_away = res.x < 0.0;
-
+        
         float display_distance = display_north_offset - rotated_lens_vector.x;
         if (!curved_display) {
             // flat display
@@ -193,13 +250,13 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
             float radius = display_size;
 
             // position ourselves within the circle's radius based on desired display distance
-            vec2 vectorStart = vec2(radius - display_distance, rotated_lens_vector.y);
+            float2 vectorStart = float2(radius - display_distance, rotated_lens_vector.y);
 
             // scale the vector to the length needed to reach the curved display, then add the lens offsets back on
             float scale = getVectorScaleToCurve(radius, vectorStart, res.xy);
             if (scale <= 0.0) looking_away = true;
             res *= scale;
-            res += vec3(vectorStart.x, vectorStart.y, rotated_lens_vector.z);
+            res += float3(vectorStart.x, vectorStart.y, rotated_lens_vector.z);
 
             // we know exactly how many radians of the circle is covered by a single display's horizontal FOV,
             // so texcoord.x is just converting our vector.xy to radians and figuring out the percentage of the total 
@@ -216,7 +273,7 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
         texcoord.x = texcoord.x * texcoord_width + effective_x_limits.x;
 
         // scale/zoom operations must always be done around the center
-        vec2 texcoord_center = vec2(effective_x_limits.x + texcoord_width/2.0f, 0.5f);
+        float2 texcoord_center = float2(effective_x_limits.x + texcoord_width/2.0, 0.5);
         texcoord -= texcoord_center;
         if (!curved_display) {
             // scale the coordinates from aspect ratio of display to the aspect ratio of the source texture
@@ -228,14 +285,36 @@ void PS_IMU_Transform(vec4 pos, vec2 texcoord, out vec4 color) {
         texcoord += texcoord_center;
 
         if(looking_away || 
-           texcoord.x < effective_x_limits.x + trim_width_percent || 
-           texcoord.y < trim_height_percent || 
-           texcoord.x > effective_x_limits.y - trim_width_percent || 
-           texcoord.y > 1.0 - trim_height_percent || 
+           texcoord.x < effective_x_limits.x + trim_percent.x || 
+           texcoord.y < trim_percent.y || 
+           texcoord.x > effective_x_limits.y - trim_percent.x || 
+           texcoord.y > 1.0 - trim_percent.y || 
            texcoord.x <= 0.001 && texcoord.y <= 0.002) {
-            color = vec4(0, 0, 0, 1);
+            color = float4(0, 0, 0, 1);
         } else {
-            color = texture2D(uDesktopTexture, texcoord);
+            color = SAMPLE_TEXTURE(screenTexture, texcoord);
         }
     }
 }
+
+#if RESHADE
+    void Reshade_PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out float4 color : SV_Target) {
+        virtual_display_enabled &= isKeepaliveRecent(date, keepalive_date);
+        float res_x_divisor = sbs_enabled ? 2.0 : 1.0;
+        float2 source_resolution = float2(ReShade::ScreenSize.x / res_x_divisor, ReShade::ScreenSize.y);
+        source_to_display_ratio = source_resolution / display_resolution;
+
+        show_banner = all(imu_quat_data[0] == imu_reset_data) && all(imu_quat_data[1] == imu_reset_data);
+
+        PS_IMU_Transform(texcoord, color);
+    }
+
+    technique Transform < enabled = true; >
+    {
+        pass
+        {
+            VertexShader = PostProcessVS;
+            PixelShader = Reshade_PS_IMU_Transform;
+        }
+    }
+#endif
