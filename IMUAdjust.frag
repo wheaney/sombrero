@@ -7,21 +7,26 @@
     #define SAMPLE_TEXTURE(name, coord) tex2D(name, coord)
     #define DECLARE_UNIFORM(type, name, annotation) uniform type name annotation
 
-    uniform sampler screenTexture = ReShade::BackBuffer;
+    texture BackBufferTex : COLOR;
+    sampler screenTexture { Texture = BackBufferTex; };
     texture2D calibratingImage < source = "calibrating.png"; > {
         Width = 800;
         Height = 200;
     };
-    sampler2D calibratingSampler {
+    sampler2D calibratingTexture {
         Texture = calibratingImage;
     };
     texture2D customBannerImage < source = "custom_banner.png"; > {
         Width = 800;
         Height = 200;
     };
-    sampler2D customBannerSampler {
+    sampler2D customBannerTexture {
         Texture = customBannerImage;
     };
+
+    float mod(float x, float y) {
+        return x % y;
+    }
 #else
     #define RESHADE 0
 
@@ -36,6 +41,9 @@
     #define uint2 uvec2
     #define uint3 uvec3
     #define uint4 uvec4
+
+    // functions to match HLSL/ReShade
+    #define atan2 atan
 
     #define SAMPLE_TEXTURE(name, coord) texture2D(name, coord)
     #define DECLARE_UNIFORM(type, name, annotation) uniform type name
@@ -53,12 +61,12 @@ DECLARE_UNIFORM(float4x4, imu_quat_data, < source = "imu_quat_data"; defaultValu
     0.0,    0.0,    0.0,    0.0  // timestamps for t0, t1, and t2, last value is unused
 ); >);
 DECLARE_UNIFORM(float4, look_ahead_cfg, < source = "look_ahead_cfg"; defaultValue=float4(0.0, 0.0, 0.0, 0.0); >);
-DECLARE_UNIFORM(float2, display_resolution, < source = "display_res"; defaultValue=float2(1920, 1080); >);
+DECLARE_UNIFORM(uint2, display_resolution, < source = "display_res"; defaultValue=float2(1920, 1080); >);
 DECLARE_UNIFORM(float2, source_to_display_ratio, < source = "source_to_display_ratio"; defaultValue=float2(1.0, 1.0); >);
 DECLARE_UNIFORM(float, display_size, < source = "display_zoom"; defaultValue=1.0; >);
 DECLARE_UNIFORM(float, display_north_offset, < source = "display_north_offset"; defaultValue=1.0; >);
-DECLARE_UNIFORM(float3, lens_vector, < source = "lens_vector"; defaultValue=float3(1.0, 0.0, 0.0); >);
-DECLARE_UNIFORM(float3, lens_vector_r, < source = "lens_vector_r"; defaultValue=float3(1.0, 0.0, 0.0); >);
+DECLARE_UNIFORM(float3, lens_vector, < source = "lens_vector"; defaultValue=float3(0.05, 0.0, 0.0); >);
+DECLARE_UNIFORM(float3, lens_vector_r, < source = "lens_vector_r"; defaultValue=float3(0.05, 0.0, 0.0); >);
 DECLARE_UNIFORM(float2, texcoord_x_limits, < source = "texcoord_x_limits"; defaultValue=float2(0.0, 1.0); >);
 DECLARE_UNIFORM(float2, texcoord_x_limits_r, < source = "texcoord_x_limits_r"; defaultValue=float2(0.0, 1.0); >);
 DECLARE_UNIFORM(bool, show_banner, < source = "show_banner"; defaultValue=false; >);
@@ -155,11 +163,11 @@ float getVectorScaleToCurve(float radius, float2 vectorStart, float2 lookVector)
     );
 }
 
-void PS_IMU_Transform(float2 texcoord, out float4 color) {
+void PS_IMU_Transform(bool shader_enabled, float2 src_dsp_ratio, bool banner_visible, float2 texcoord, out float4 color) {
     float2 effective_x_limits = texcoord_x_limits;
     float3 effective_lens_vector = lens_vector;
 
-    if (sbs_enabled && virtual_display_enabled) {
+    if (sbs_enabled && shader_enabled) {
         bool right_display = texcoord.x > 0.5;
 
         if(right_display) {
@@ -172,9 +180,9 @@ void PS_IMU_Transform(float2 texcoord, out float4 color) {
     }
     float texcoord_width = effective_x_limits.y - effective_x_limits.x;
 
-    if (virtual_display_enabled || show_banner) {
+    if (!shader_enabled || banner_visible) {
         bool banner_shown = false;
-        if (show_banner) {
+        if (banner_visible) {
             float2 banner_size = float2(800.0, 200.0) / display_resolution;
 
             // if the banner width is greater than the sreen width, scale it down
@@ -261,8 +269,8 @@ void PS_IMU_Transform(float2 texcoord, out float4 color) {
             // we know exactly how many radians of the circle is covered by a single display's horizontal FOV,
             // so texcoord.x is just converting our vector.xy to radians and figuring out the percentage of the total 
             // FOV of all virtual displays
-            float fov_y = half_fov_y_rads * 2 * source_to_display_ratio.x;
-            float res_y_rads = (fov_y / 2) - atan(res.y, res.x);
+            float fov_y = half_fov_y_rads * 2 * src_dsp_ratio.x;
+            float res_y_rads = (fov_y / 2) - atan2(res.y, res.x);
             texcoord.x = res_y_rads / fov_y;
         }
 
@@ -277,10 +285,10 @@ void PS_IMU_Transform(float2 texcoord, out float4 color) {
         texcoord -= texcoord_center;
         if (!curved_display) {
             // scale the coordinates from aspect ratio of display to the aspect ratio of the source texture
-            texcoord /= source_to_display_ratio * display_size;
+            texcoord /= src_dsp_ratio * display_size;
         } else {
             // curved radius-based logic only applied horizontally, so only y needs scaling
-            texcoord.y /= source_to_display_ratio.y * display_size;
+            texcoord.y /= src_dsp_ratio.y * display_size;
         }
         texcoord += texcoord_center;
 
@@ -299,14 +307,13 @@ void PS_IMU_Transform(float2 texcoord, out float4 color) {
 
 #if RESHADE
     void Reshade_PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out float4 color : SV_Target) {
-        virtual_display_enabled &= isKeepaliveRecent(date, keepalive_date);
+        bool shader_enabled = virtual_display_enabled && isKeepaliveRecent(date, keepalive_date);
         float res_x_divisor = sbs_enabled ? 2.0 : 1.0;
         float2 source_resolution = float2(ReShade::ScreenSize.x / res_x_divisor, ReShade::ScreenSize.y);
-        source_to_display_ratio = source_resolution / display_resolution;
+        float2 src_dsp_ratio = source_resolution / display_resolution;
+        bool banner_visible = all(imu_quat_data[0] == imu_reset_data) && all(imu_quat_data[1] == imu_reset_data);
 
-        show_banner = all(imu_quat_data[0] == imu_reset_data) && all(imu_quat_data[1] == imu_reset_data);
-
-        PS_IMU_Transform(texcoord, color);
+        PS_IMU_Transform(shader_enabled, src_dsp_ratio, banner_visible, texcoord, color);
     }
 
     technique Transform < enabled = true; >
