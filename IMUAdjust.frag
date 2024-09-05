@@ -61,7 +61,7 @@ DECLARE_UNIFORM(float4x4, imu_quat_data, < source = "imu_quat_data"; defaultValu
     0.0,    0.0,    0.0,    0.0  // timestamps for t0, t1, and t2, last value is unused
 ); >);
 DECLARE_UNIFORM(float4, look_ahead_cfg, < source = "look_ahead_cfg"; defaultValue=float4(0.0, 0.0, 0.0, 0.0); >);
-DECLARE_UNIFORM(uint2, display_resolution, < source = "display_res"; defaultValue=float2(1920, 1080); >);
+DECLARE_UNIFORM(float2, display_resolution, < source = "display_res"; defaultValue=float2(1920, 1080); >);
 DECLARE_UNIFORM(float2, source_to_display_ratio, < source = "source_to_display_ratio"; defaultValue=float2(1.0, 1.0); >);
 DECLARE_UNIFORM(float, display_size, < source = "display_zoom"; defaultValue=1.0; >);
 DECLARE_UNIFORM(float, display_north_offset, < source = "display_north_offset"; defaultValue=1.0; >);
