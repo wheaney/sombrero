@@ -53,6 +53,10 @@
     uniform sampler2D customBannerTexture;
 #endif
 
+uniform float2 banner_position = float2(0.5, 0.9);
+uniform float day_in_seconds = 24 * 60 * 60;
+
+// ======== BEGIN virtual display uniforms ========
 DECLARE_UNIFORM(bool, virtual_display_enabled, < source = "virtual_display_enabled"; defaultValue=false; >);
 DECLARE_UNIFORM(float4x4, imu_quat_data, < source = "imu_quat_data"; defaultValue=float4x4(
     0.0,    0.0,    0.0,    0.0, // quat snapshot at t0
@@ -86,9 +90,16 @@ DECLARE_UNIFORM(float2, fov_half_widths, < source = "fov_half_widths"; defaultVa
 DECLARE_UNIFORM(float2, fov_widths, < source = "fov_widths"; defaultValue=float2(0.34987, 0.1968); >);
 
 uniform float4 imu_reset_data = float4(0.0, 0.0, 0.0, 1.0);
-uniform float2 banner_position = float2(0.5, 0.9);
 uniform float look_ahead_ms_cap = 45.0;
-uniform float day_in_seconds = 24 * 60 * 60;
+// ======== END virtual display uniforms ========
+
+// ======== BEGIN sideview uniforms ========
+DECLARE_UNIFORM(bool, sideview_enabled, < source = "sideview_enabled"; defaultValue=false; >);
+
+// 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right, 4 = center
+DECLARE_UNIFORM(float, sideview_position, < source = "sideview_position"; defaultValue=0; >);
+DECLARE_UNIFORM(float, sideview_display_size, < source = "sideview_display_size"; defaultValue=1.0f; >);
+// ======== END sideview uniforms ========
 
 float4 quatMul(float4 q1, float4 q2) {
     float3 u = float3(q1.x, q1.y, q1.z);
@@ -163,11 +174,46 @@ float getVectorScaleToCurve(float radius, float2 vectorStart, float2 lookVector)
     );
 }
 
-void PS_IMU_Transform(bool shader_enabled, float2 src_dsp_ratio, bool banner_visible, float2 texcoord, out float4 color) {
+float2 applySideviewTransform(float2 texcoord) {
+    float texcoord_x_min = 0.0;
+    float texcoord_x_max = 1.0;
+    float texcoord_y_min = 0.0;
+    float texcoord_y_max = 1.0;
+
+    if (sideview_position == 0 || sideview_position == 1) {
+        // top
+        texcoord_y_max = sideview_display_size;
+    } else {
+        // bottom
+        texcoord_y_min = 1.0 - sideview_display_size;
+    }
+
+    if (sideview_position == 0 || sideview_position == 2) {
+        // left
+        texcoord_x_max = sideview_display_size;
+    } else {
+        // right
+        texcoord_x_min = 1.0 - sideview_display_size;
+    }
+
+    if (sideview_position == 4) {
+        // center
+        texcoord_x_min = texcoord_y_min = (1.0 - sideview_display_size) / 2.0;
+        texcoord_x_max = texcoord_y_max = (1.0 + sideview_display_size) / 2.0;
+    }
+
+    // scale texcoord.x and texcoord.y to the new range
+    texcoord.x = (texcoord.x - texcoord_x_min) / sideview_display_size;
+    texcoord.y = (texcoord.y - texcoord_y_min) / sideview_display_size;
+
+    return texcoord;
+}
+
+void PS_IMU_Transform(bool vd_effect_enabled, bool sideview_effect_enabled, float2 src_dsp_ratio, bool banner_visible, float2 texcoord, out float4 color) {
     float2 effective_x_limits = texcoord_x_limits;
     float3 effective_lens_vector = lens_vector;
 
-    if (sbs_enabled && shader_enabled) {
+    if (sbs_enabled && vd_effect_enabled) {
         bool right_display = texcoord.x > 0.5;
 
         if(right_display) {
@@ -178,39 +224,9 @@ void PS_IMU_Transform(bool shader_enabled, float2 src_dsp_ratio, bool banner_vis
         // translate the texcoord respresenting the current lens's half of the screen to a full-screen texcoord
         texcoord.x = (texcoord.x - (right_display ? 0.5 : 0.0)) * 2;
     }
-    float texcoord_width = effective_x_limits.y - effective_x_limits.x;
-
-    if (!shader_enabled || banner_visible) {
-        bool banner_shown = false;
-        if (banner_visible) {
-            float2 banner_size = float2(800.0, 200.0) / display_resolution;
-
-            // if the banner width is greater than the sreen width, scale it down
-            banner_size /= max(banner_size.x, 1.1);
-
-            float2 banner_start = banner_position - banner_size / 2;
-
-            // if the banner would extend too close or past the bottom edge of the screen, apply some padding
-            banner_start.y = min(banner_start.y, 0.95 - banner_size.y);
-
-            float2 banner_texcoord = (texcoord - banner_start) / banner_size;
-            if (banner_texcoord.x >= 0.0 && banner_texcoord.x <= 1.0 && banner_texcoord.y >= 0.0 && banner_texcoord.y <= 1.0) {
-                banner_shown = true;
-                if (custom_banner_enabled) {
-                    color = SAMPLE_TEXTURE(customBannerTexture, banner_texcoord);
-                } else {
-                    color = SAMPLE_TEXTURE(calibratingTexture, banner_texcoord);
-                }
-            }
-        }
-        
-        if (!banner_shown) {
-            // adjust texcoord back to the range that describes where the content is displayed
-            texcoord.x = texcoord.x * texcoord_width + effective_x_limits.x;
-
-            color = SAMPLE_TEXTURE(screenTexture, texcoord);
-        }
-    } else { 
+    bool looking_away = false;
+    bool static_screen = !vd_effect_enabled || banner_visible;
+    if (!static_screen) {
         float vec_y = -texcoord.x * fov_widths.x + fov_half_widths.x;
         float vec_z = -texcoord.y * fov_widths.y + fov_half_widths.y;
         float3 texcoord_vector = float3(1.0, vec_y, vec_z);
@@ -237,7 +253,7 @@ void PS_IMU_Transform(bool shader_enabled, float2 src_dsp_ratio, bool banner_vis
         // apply most recent velocity and acceleration to most recent position to get a predicted position
         float3 res = applyLookAhead(rotated_vector_t0, velocity_t0, look_ahead_ms_capped) - rotated_lens_vector;
 
-        bool looking_away = res.x < 0.0;
+        looking_away = res.x < 0.0;
         
         float display_distance = display_north_offset - rotated_lens_vector.x;
         if (!curved_display) {
@@ -276,10 +292,13 @@ void PS_IMU_Transform(bool shader_enabled, float2 src_dsp_ratio, bool banner_vis
 
         // screens are always flat in the vertical direction, so this is the same for curved and flat cases
         texcoord.y = (fov_half_widths.y - res.z) / fov_widths.y;
+    }
 
-        // apply the texture offsets now
-        texcoord.x = texcoord.x * texcoord_width + effective_x_limits.x;
+    // apply the texture offsets now
+    float texcoord_width = effective_x_limits.y - effective_x_limits.x;
+    texcoord.x = texcoord.x * texcoord_width + effective_x_limits.x;
 
+    if (!static_screen) {
         // scale/zoom operations must always be done around the center
         float2 texcoord_center = float2(effective_x_limits.x + texcoord_width/2.0, 0.5);
         texcoord -= texcoord_center;
@@ -291,29 +310,56 @@ void PS_IMU_Transform(bool shader_enabled, float2 src_dsp_ratio, bool banner_vis
             texcoord.y /= src_dsp_ratio.y * display_size;
         }
         texcoord += texcoord_center;
+    }
 
-        if(looking_away || 
-           texcoord.x < effective_x_limits.x + trim_percent.x || 
-           texcoord.y < trim_percent.y || 
-           texcoord.x > effective_x_limits.y - trim_percent.x || 
-           texcoord.y > 1.0 - trim_percent.y || 
-           texcoord.x <= 0.001 && texcoord.y <= 0.002) {
-            color = float4(0, 0, 0, 1);
-        } else {
-            color = SAMPLE_TEXTURE(screenTexture, texcoord);
+    if (sideview_effect_enabled) texcoord = applySideviewTransform(texcoord);
+
+    if (banner_visible) {
+        float2 banner_size = float2(800.0, 200.0) / display_resolution;
+
+        // if the banner width is greater than the sreen width, scale it down
+        banner_size /= max(banner_size.x, 1.1);
+
+        float2 banner_start = banner_position - banner_size / 2;
+
+        // if the banner would extend too close or past the bottom edge of the screen, apply some padding
+        banner_start.y = min(banner_start.y, 0.95 - banner_size.y);
+
+        float2 banner_texcoord = (texcoord - banner_start) / banner_size;
+        if (banner_texcoord.x >= 0.0 && banner_texcoord.x <= 1.0 && banner_texcoord.y >= 0.0 && banner_texcoord.y <= 1.0) {
+            if (custom_banner_enabled) {
+                color = SAMPLE_TEXTURE(customBannerTexture, banner_texcoord);
+            } else {
+                color = SAMPLE_TEXTURE(calibratingTexture, banner_texcoord);
+            }
+            
+            return;
         }
+    }
+        
+    if(looking_away || 
+        texcoord.x < effective_x_limits.x + trim_percent.x || 
+        texcoord.y < trim_percent.y || 
+        texcoord.x > effective_x_limits.y - trim_percent.x || 
+        texcoord.y > 1.0 - trim_percent.y || 
+        texcoord.x <= 0.001 && texcoord.y <= 0.002) {
+        color = float4(0, 0, 0, 1);
+    } else {
+        color = SAMPLE_TEXTURE(screenTexture, texcoord);
     }
 }
 
 #if RESHADE
     void Reshade_PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out float4 color : SV_Target) {
-        bool shader_enabled = virtual_display_enabled && isKeepaliveRecent(date, keepalive_date);
+        bool is_keepalive_recent = isKeepaliveRecent(date, keepalive_date);
+        bool vd_effect_enabled = virtual_display_enabled && is_keepalive_recent;
+        bool sideview_effect_enabled = sideview_enabled && is_keepalive_recent;
         float res_x_divisor = sbs_enabled ? 2.0 : 1.0;
         float2 source_resolution = float2(ReShade::ScreenSize.x / res_x_divisor, ReShade::ScreenSize.y);
         float2 src_dsp_ratio = source_resolution / display_resolution;
         bool banner_visible = all(imu_quat_data[0] == imu_reset_data) && all(imu_quat_data[1] == imu_reset_data);
 
-        PS_IMU_Transform(shader_enabled, src_dsp_ratio, banner_visible, texcoord, color);
+        PS_IMU_Transform(vd_effect_enabled, sideview_effect_enabled, src_dsp_ratio, banner_visible, texcoord, color);
     }
 
     technique Transform < enabled = true; >
