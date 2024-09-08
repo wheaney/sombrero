@@ -97,7 +97,7 @@ uniform float look_ahead_ms_cap = 45.0;
 DECLARE_UNIFORM(bool, sideview_enabled, < source = "sideview_enabled"; defaultValue=false; >);
 
 // 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right, 4 = center
-DECLARE_UNIFORM(float, sideview_position, < source = "sideview_position"; defaultValue=0; >);
+DECLARE_UNIFORM(float, sideview_position, < source = "sideview_position"; defaultValue=0.0; >);
 DECLARE_UNIFORM(float, sideview_display_size, < source = "sideview_display_size"; defaultValue=1.0f; >);
 // ======== END sideview uniforms ========
 
@@ -175,38 +175,24 @@ float getVectorScaleToCurve(float radius, float2 vectorStart, float2 lookVector)
 }
 
 float2 applySideviewTransform(float2 texcoord) {
-    float texcoord_x_min = 0.0;
-    float texcoord_x_max = 1.0;
-    float texcoord_y_min = 0.0;
-    float texcoord_y_max = 1.0;
+    float2 texcoord_mins = float2(0.0, 0.0);
 
-    if (sideview_position == 0 || sideview_position == 1) {
-        // top
-        texcoord_y_max = sideview_display_size;
-    } else {
+    if (sideview_position == 2 || sideview_position == 3) {
         // bottom
-        texcoord_y_min = 1.0 - sideview_display_size;
+        texcoord_mins.y = 1.0 - sideview_display_size;
     }
 
-    if (sideview_position == 0 || sideview_position == 2) {
-        // left
-        texcoord_x_max = sideview_display_size;
-    } else {
+    if (sideview_position == 1 || sideview_position == 3) {
         // right
-        texcoord_x_min = 1.0 - sideview_display_size;
+        texcoord_mins.x = 1.0 - sideview_display_size;
     }
 
     if (sideview_position == 4) {
         // center
-        texcoord_x_min = texcoord_y_min = (1.0 - sideview_display_size) / 2.0;
-        texcoord_x_max = texcoord_y_max = (1.0 + sideview_display_size) / 2.0;
+        texcoord_mins.x = texcoord_mins.y = (1.0 - sideview_display_size) / 2.0;
     }
 
-    // scale texcoord.x and texcoord.y to the new range
-    texcoord.x = (texcoord.x - texcoord_x_min) / sideview_display_size;
-    texcoord.y = (texcoord.y - texcoord_y_min) / sideview_display_size;
-
-    return texcoord;
+    return (texcoord - texcoord_mins) / sideview_display_size;
 }
 
 void PS_IMU_Transform(bool vd_effect_enabled, bool sideview_effect_enabled, float2 src_dsp_ratio, bool banner_visible, float2 texcoord, out float4 color) {
@@ -302,12 +288,14 @@ void PS_IMU_Transform(bool vd_effect_enabled, bool sideview_effect_enabled, floa
         // scale/zoom operations must always be done around the center
         float2 texcoord_center = float2(effective_x_limits.x + texcoord_width/2.0, 0.5);
         texcoord -= texcoord_center;
+        float2 aspect_ratio_adjustment = src_dsp_ratio;
+        if (!sideview_effect_enabled) aspect_ratio_adjustment *= display_size;
         if (!curved_display) {
             // scale the coordinates from aspect ratio of display to the aspect ratio of the source texture
-            texcoord /= src_dsp_ratio * display_size;
+            texcoord /= aspect_ratio_adjustment;
         } else {
             // curved radius-based logic only applied horizontally, so only y needs scaling
-            texcoord.y /= src_dsp_ratio.y * display_size;
+            texcoord.y /= aspect_ratio_adjustment.y;
         }
         texcoord += texcoord_center;
     }
