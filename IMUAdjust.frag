@@ -232,6 +232,11 @@ float2 applySideviewTransform(float2 texcoord) {
  *    to black, otherwise use the coordinates to sample the screen texture.
  */
 void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 src_dsp_ratio, bool banner_visible, float2 texcoord, out float4 color) {
+    if (!vd_effect_enabled && !sideview_effect_enabled) {
+        color = SAMPLE_TEXTURE(screenTexture, texcoord);
+        return;
+    }
+    
     // Step 1
     float2 effective_x_limits = texcoord_x_limits;
     float3 effective_lens_vector = lens_vector;
