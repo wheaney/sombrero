@@ -195,31 +195,70 @@ float2 applySideviewTransform(float2 texcoord) {
     return (texcoord - texcoord_mins) / sideview_display_size;
 }
 
-void PS_IMU_Transform(bool vd_effect_enabled, bool sideview_effect_enabled, float2 src_dsp_ratio, bool banner_visible, float2 texcoord, out float4 color) {
+/**
+ * This fragment shader function applies IMU and sideview changes along with device-specific FOV measurements and SBS state to output
+ * a virtual display to XR glasses. The steps are:
+ * 1. Determine the area of the screen texture we should be sampling. If SBS is enabled:
+ *   a. Choose the x-limits and lens vector based on the current lens (left or right).
+ *   b. Scale the texcoord's x coordinate so it treats its own half of the screen as a full-screen texcoord (e.g. for a right lens, the
+ *      an x-coordinate of 0.6 takes up 20% of the right half of the screen, so we map it to a value of 0.2).
+ * 2. If the screen is not static (i.e. virtual display is being rendered):
+ *   a. Map the texture coordinates to a vector. The vector starts at the pivot point in the middle of the wearer's head to the same 
+ *      texture-coordinate point on a screen that's at a forward distance described by the north-offset. This is the "look vector."
+ *      The look vector is technically two vectors tip-to-tail, but for simplicity we keep them as one until after rotation: 
+ *        (1) a vector going from the pivot point in the middle of the wearer's head to the lens ("lens vector"). Since this is based
+ *            on real-world physical properties of the glasses, we should be careful to keep its magnitude fixed.
+ *        (2) a vector going from the lens to the texture coordinate point on the screen ("lens look vector"). We need a separate 
+ *            understanding of this vector for scaling purposes later, otherwise we'd be scaling the lens vector, whose magnitude is fixed.
+ *   b. Compute a rotation based on the IMU rotation with additional look-ahead rotation applied to predict where the pose will be in
+ *      a specific number of milliseconds.
+ *   c. Apply the IMU+look-ahead rotation to the look vector and lens vector separately.
+ *   d. Remove the rotated lens vector from the rotated look vector so we're left with just the lens look vector in preparation for scaling.
+ *   e. Scale the lens look vector so it's tip is on the same plane as the screen again (the rotation may have taken it slightly off this plane).
+ *   f. Append the rotated lens vector again so we're left with the final look vector.
+ *   g. Map the final look vector back to texture coordinates.
+ *   h. Apply aspect ratio scaling so the screen doesn't appear warped in cases where the source and destination aspect ratios differ, and 
+ *      apply the display zoom requested by the user.
+ * 3. If sideview is enabled, apply the requested sideview transform, which just scales and translates the texture coordinates.
+ * 4. If the banner is being shown:
+ *   a. Scale the full-screen texture coordinates to coordinates relative to the banner texture, then figure out if those texture 
+ *      coordinates fall within the banner region.
+ *   b. If so, sample the banner texture, this is our final color so we can exit.
+ * 5. After we've applied all effects, we've got the final texture coordinates, but they're relative to a full-screen texture. Apply the 
+ *    x-limits to move the texcoords to the relevant area of the screen texture so it's ready for sampling (e.g. with an x-coordinate of 0.2, 
+ *    for a split SBS image from the right lens we would want to be sampling 20% of the way into the right-half of the screen texture, so it 
+ *    would map to 0.6 on the original screen texture).
+ * 6. Inspect the final texture coordinates to ensure they fall within the sample-able bounds of the screen texture. If not, set the color 
+ *    to black, otherwise use the coordinates to sample the screen texture.
+ */
+void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 src_dsp_ratio, bool banner_visible, float2 texcoord, out float4 color) {
+    // Step 1
     float2 effective_x_limits = texcoord_x_limits;
     float3 effective_lens_vector = lens_vector;
 
-    if (sbs_enabled && vd_effect_enabled) {
+    if (sbs_enabled && (vd_effect_enabled || sideview_effect_enabled)) {
+        // Step 1.a
         bool right_display = texcoord.x > 0.5;
-
         if(right_display) {
             effective_x_limits = texcoord_x_limits_r;
             effective_lens_vector = lens_vector_r;
         }
 
-        // translate the texcoord respresenting the current lens's half of the screen to a full-screen texcoord
+        // Step 1.b
         texcoord.x = (texcoord.x - (right_display ? 0.5 : 0.0)) * 2;
     }
+
+    // Step 2
     bool looking_away = false;
-    bool static_screen = !vd_effect_enabled || banner_visible;
-    if (!static_screen) {
+    if (vd_effect_enabled && !banner_visible) {
+        // Step 2.a
         float vec_y = -texcoord.x * fov_widths.x + fov_half_widths.x;
         float vec_z = -texcoord.y * fov_widths.y + fov_half_widths.y;
-        float3 texcoord_vector = float3(1.0, vec_y, vec_z);
+        float3 look_vector = float3(1.0, vec_y, vec_z);
 
-        // then rotate the vector using each of the snapshots provided
-        float3 rotated_vector_t0 = applyQuaternionToVector(imu_quat_data[0], texcoord_vector);
-        float3 rotated_vector_t1 = applyQuaternionToVector(imu_quat_data[1], texcoord_vector);
+        // Step 2.b
+        float3 rotated_vector_t0 = applyQuaternionToVector(imu_quat_data[0], look_vector);
+        float3 rotated_vector_t1 = applyQuaternionToVector(imu_quat_data[1], look_vector);
         float3 rotated_lens_vector = applyQuaternionToVector(imu_quat_data[0], effective_lens_vector);
 
         // compute the velocity (units/ms) as change in the rotation snapshots
@@ -236,26 +275,35 @@ void PS_IMU_Transform(bool vd_effect_enabled, bool sideview_effect_enabled, floa
         // use the 4th value of the look-ahead config to cap the look-ahead value
         float look_ahead_ms_capped = min(min(effective_look_ahead_ms, look_ahead_cfg.w), look_ahead_ms_cap) + look_ahead_scanline_adjust;
 
-        // apply most recent velocity and acceleration to most recent position to get a predicted position
-        float3 res = applyLookAhead(rotated_vector_t0, velocity_t0, look_ahead_ms_capped) - rotated_lens_vector;
+        // Step 2.c
+        float3 rotated_look_vector = applyLookAhead(rotated_vector_t0, velocity_t0, look_ahead_ms_capped);
 
-        looking_away = res.x < 0.0;
+        // Step 2.d
+        float3 lens_look_vector = rotated_look_vector - rotated_lens_vector;
+
+        looking_away = lens_look_vector.x < 0.0;
         
         float display_distance = display_north_offset - rotated_lens_vector.x;
+        float3 final_look_vector;
         if (!curved_display) {
             // flat display
 
+            // Step 2.e
             // divide all values by x to scale the magnitude so x is exactly 1, and multiply by the final display distance
             // so the vector is pointing at a coordinate on the screen
-            res *= display_distance / res.x;
-            res += rotated_lens_vector;
+            lens_look_vector *= display_distance / lens_look_vector.x;
 
+            // Step 2.f
+            final_look_vector = lens_look_vector + rotated_lens_vector;
+
+            // Step 2.g for x-coord
             // deconstruct the rotated and scaled vector back to a texcoord (just inverse operations of the first conversion
             // above)
-            texcoord.x = (fov_half_widths.x - res.y) / fov_widths.x;
+            texcoord.x = (fov_half_widths.x - final_look_vector.y) / fov_widths.x;
         } else {
             // curved display
 
+            // Step 2.e
             // the screen sizes scale with the circle, so to zoom, we just make the circle bigger
             float radius = display_size;
 
@@ -263,30 +311,29 @@ void PS_IMU_Transform(bool vd_effect_enabled, bool sideview_effect_enabled, floa
             float2 vectorStart = float2(radius - display_distance, rotated_lens_vector.y);
 
             // scale the vector to the length needed to reach the curved display, then add the lens offsets back on
-            float scale = getVectorScaleToCurve(radius, vectorStart, res.xy);
+            float scale = getVectorScaleToCurve(radius, vectorStart, lens_look_vector.xy);
             if (scale <= 0.0) looking_away = true;
-            res *= scale;
-            res += float3(vectorStart.x, vectorStart.y, rotated_lens_vector.z);
+            lens_look_vector *= scale;
 
+            // Step 2.f
+            final_look_vector = lens_look_vector + float3(vectorStart.x, vectorStart.y, rotated_lens_vector.z);
+
+            // Step 2.g for x-coord
             // we know exactly how many radians of the circle is covered by a single display's horizontal FOV,
             // so texcoord.x is just converting our vector.xy to radians and figuring out the percentage of the total 
             // FOV of all virtual displays
             float fov_y = half_fov_y_rads * 2 * src_dsp_ratio.x;
-            float res_y_rads = (fov_y / 2) - atan2(res.y, res.x);
-            texcoord.x = res_y_rads / fov_y;
+            float final_look_vector_y_rads = (fov_y / 2) - atan2(final_look_vector.y, final_look_vector.x);
+            texcoord.x = final_look_vector_y_rads / fov_y;
         }
 
+        // Step 2.g for y-coord
         // screens are always flat in the vertical direction, so this is the same for curved and flat cases
-        texcoord.y = (fov_half_widths.y - res.z) / fov_widths.y;
-    }
+        texcoord.y = (fov_half_widths.y - final_look_vector.z) / fov_widths.y;
 
-    // apply the texture offsets now
-    float texcoord_width = effective_x_limits.y - effective_x_limits.x;
-    texcoord.x = texcoord.x * texcoord_width + effective_x_limits.x;
-
-    if (!static_screen) {
+        // Step 2.h
         // scale/zoom operations must always be done around the center
-        float2 texcoord_center = float2(effective_x_limits.x + texcoord_width/2.0, 0.5);
+        float2 texcoord_center = float2(0.5, 0.5);
         texcoord -= texcoord_center;
         float2 aspect_ratio_adjustment = src_dsp_ratio;
         if (!sideview_effect_enabled) aspect_ratio_adjustment *= display_size;
@@ -300,9 +347,12 @@ void PS_IMU_Transform(bool vd_effect_enabled, bool sideview_effect_enabled, floa
         texcoord += texcoord_center;
     }
 
+    // Step 3
     if (sideview_effect_enabled) texcoord = applySideviewTransform(texcoord);
 
+    // Step 4
     if (banner_visible) {
+        // Step 4.a
         float2 banner_size = float2(800.0, 200.0) / display_resolution;
 
         // if the banner width is greater than the sreen width, scale it down
@@ -313,8 +363,10 @@ void PS_IMU_Transform(bool vd_effect_enabled, bool sideview_effect_enabled, floa
         // if the banner would extend too close or past the bottom edge of the screen, apply some padding
         banner_start.y = min(banner_start.y, 0.95 - banner_size.y);
 
+        // figure out the texture coordinates relative to the banner texture
         float2 banner_texcoord = (texcoord - banner_start) / banner_size;
         if (banner_texcoord.x >= 0.0 && banner_texcoord.x <= 1.0 && banner_texcoord.y >= 0.0 && banner_texcoord.y <= 1.0) {
+            // Step 4.b
             if (custom_banner_enabled) {
                 color = SAMPLE_TEXTURE(customBannerTexture, banner_texcoord);
             } else {
@@ -324,7 +376,12 @@ void PS_IMU_Transform(bool vd_effect_enabled, bool sideview_effect_enabled, floa
             return;
         }
     }
-        
+
+    // Step 5
+    float texcoord_width = effective_x_limits.y - effective_x_limits.x;
+    texcoord.x = texcoord.x * texcoord_width + effective_x_limits.x;
+
+    // Step 6
     if(looking_away || 
         texcoord.x < effective_x_limits.x + trim_percent.x || 
         texcoord.y < trim_percent.y || 
@@ -338,7 +395,7 @@ void PS_IMU_Transform(bool vd_effect_enabled, bool sideview_effect_enabled, floa
 }
 
 #if RESHADE
-    void Reshade_PS_IMU_Transform(float4 pos : SV_Position, float2 texcoord : TexCoord, out float4 color : SV_Target) {
+    void Reshade_PS_Sombrero(float4 pos : SV_Position, float2 texcoord : TexCoord, out float4 color : SV_Target) {
         bool is_keepalive_recent = isKeepaliveRecent(date, keepalive_date);
         bool vd_effect_enabled = virtual_display_enabled && is_keepalive_recent;
         bool sideview_effect_enabled = sideview_enabled && is_keepalive_recent;
@@ -347,7 +404,7 @@ void PS_IMU_Transform(bool vd_effect_enabled, bool sideview_effect_enabled, floa
         float2 src_dsp_ratio = source_resolution / display_resolution;
         bool banner_visible = all(imu_quat_data[0] == imu_reset_data) && all(imu_quat_data[1] == imu_reset_data);
 
-        PS_IMU_Transform(vd_effect_enabled, sideview_effect_enabled, src_dsp_ratio, banner_visible, texcoord, color);
+        PS_Sombrero(vd_effect_enabled, sideview_effect_enabled, src_dsp_ratio, banner_visible, texcoord, color);
     }
 
     technique Transform < enabled = true; >
@@ -355,7 +412,7 @@ void PS_IMU_Transform(bool vd_effect_enabled, bool sideview_effect_enabled, floa
         pass
         {
             VertexShader = PostProcessVS;
-            PixelShader = Reshade_PS_IMU_Transform;
+            PixelShader = Reshade_PS_Sombrero;
         }
     }
 #endif
