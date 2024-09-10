@@ -78,7 +78,6 @@ DECLARE_UNIFORM(float, frametime, < source = "frametime"; >);
 DECLARE_UNIFORM(float, look_ahead_ms, < source = "look_ahead_ms"; defaultValue=0.0; >);
 DECLARE_UNIFORM(float4, date, < source = "date"; >);
 DECLARE_UNIFORM(float4, keepalive_date, < source = "keepalive_date"; defaultValue=float4(0, 0, 0, 0); >);
-DECLARE_UNIFORM(bool, sbs_enabled, < source = "sbs_enabled"; defaultValue=false; >);
 DECLARE_UNIFORM(bool, custom_banner_enabled, < source = "custom_banner_enabled"; defaultValue=false; >);
 DECLARE_UNIFORM(float2, trim_percent, < source = "trim_percent"; defaultValue=float2(0.0, 0.0); >);
 DECLARE_UNIFORM(bool, curved_display, < source = "curved_display"; defaultValue=false; >);
@@ -101,6 +100,8 @@ DECLARE_UNIFORM(float, sideview_position, < source = "sideview_position"; defaul
 DECLARE_UNIFORM(float, sideview_display_size, < source = "sideview_display_size"; defaultValue=1.0f; >);
 // ======== END sideview uniforms ========
 
+DECLARE_UNIFORM(bool, sbs_enabled, < source = "sbs_enabled"; defaultValue=false; >);
+
 float4 quatMul(float4 q1, float4 q2) {
     float3 u = float3(q1.x, q1.y, q1.z);
     float s = q1.w;
@@ -116,6 +117,7 @@ float4 quatConj(float4 q) {
 float3 applyQuaternionToVector(float4 q, float3 v) {
     float4 p = quatMul(quatMul(q, float4(v, 0)), quatConj(q));
     return p.xyz;
+
 }
 
 // attempt to figure out where the current position should be based on previous position and velocity.
@@ -174,25 +176,28 @@ float getVectorScaleToCurve(float radius, float2 vectorStart, float2 lookVector)
     );
 }
 
-float2 applySideviewTransform(float2 texcoord) {
+float2 applySideviewTransform(float2 texcoords) {
     float2 texcoord_mins = float2(0.0, 0.0);
+
+    // display size is the inverse of the distance (not precisely, but close enough)
+    float effective_display_size = sideview_display_size / display_north_offset;
 
     if (sideview_position == 2 || sideview_position == 3) {
         // bottom
-        texcoord_mins.y = 1.0 - sideview_display_size;
+        texcoord_mins.y = 1.0 - effective_display_size;
     }
 
     if (sideview_position == 1 || sideview_position == 3) {
         // right
-        texcoord_mins.x = 1.0 - sideview_display_size;
+        texcoord_mins.x = 1.0 - effective_display_size;
     }
 
     if (sideview_position == 4) {
         // center
-        texcoord_mins.x = texcoord_mins.y = (1.0 - sideview_display_size) / 2.0;
+        texcoord_mins.x = texcoord_mins.y = (1.0 - effective_display_size) / 2.0;
     }
 
-    return (texcoord - texcoord_mins) / sideview_display_size;
+    return (texcoord - texcoord_mins) / effective_display_size;
 }
 
 /**
@@ -341,7 +346,13 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
         float2 texcoord_center = float2(0.5, 0.5);
         texcoord -= texcoord_center;
         float2 aspect_ratio_adjustment = src_dsp_ratio;
-        if (!sideview_effect_enabled) aspect_ratio_adjustment *= display_size;
+        if (sideview_effect_enabled) {
+            // undo scaling caused by display distance, sideview will re-apply this
+            texcoord /= display_north_offset;
+        } else {
+            aspect_ratio_adjustment *= display_size;
+        }
+
         if (!curved_display) {
             // scale the coordinates from aspect ratio of display to the aspect ratio of the source texture
             texcoord /= aspect_ratio_adjustment;
