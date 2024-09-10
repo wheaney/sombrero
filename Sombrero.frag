@@ -176,7 +176,7 @@ float getVectorScaleToCurve(float radius, float2 vectorStart, float2 lookVector)
     );
 }
 
-float2 applySideviewTransform(float2 texcoords) {
+float2 applySideviewTransform(float2 texcoord) {
     float2 texcoord_mins = float2(0.0, 0.0);
 
     // display size is the inverse of the distance (not precisely, but close enough)
