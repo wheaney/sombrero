@@ -422,7 +422,7 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
         // the rendering application may have stretched the image to fit the SBS screen, if so then the texture
         // is actually double the width of the original source content, so we should adjust our understanding of
         // the source resolution accordingly
-        if (sbs_enabled && sbs_mode_stretched)
+        if (sbs_enabled && sbs_mode_stretched && ReShade::AspectRatio > 2)
             source_resolution.x /= 2.0;
 
         float2 src_dsp_ratio = source_resolution / display_resolution;
