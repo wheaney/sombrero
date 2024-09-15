@@ -27,6 +27,8 @@
     float mod(float x, float y) {
         return x % y;
     }
+
+    DECLARE_UNIFORM(bool, sbs_mode_stretched, < source = "sbs_mode_stretched"; defaultValue=false; >);
 #else
     #define RESHADE 0
 
@@ -415,8 +417,14 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
         bool is_keepalive_recent = isKeepaliveRecent(date, keepalive_date);
         bool vd_effect_enabled = virtual_display_enabled && is_keepalive_recent;
         bool sideview_effect_enabled = sideview_enabled && is_keepalive_recent;
-        float res_x_divisor = sbs_enabled ? 2.0 : 1.0;
-        float2 source_resolution = float2(ReShade::ScreenSize.x / res_x_divisor, ReShade::ScreenSize.y);
+        float2 source_resolution = float2(ReShade::ScreenSize.x, ReShade::ScreenSize.y);
+
+        // the rendering application may have stretched the image to fit the SBS screen, if so then the texture
+        // is actually double the width of the original source content, so we should adjust our understanding of
+        // the source resolution accordingly
+        if (sbs_enabled && sbs_mode_stretched)
+            source_resolution.x /= 2.0;
+
         float2 src_dsp_ratio = source_resolution / display_resolution;
         bool banner_visible = all(imu_quat_data[0] == imu_reset_data) && all(imu_quat_data[1] == imu_reset_data);
 
