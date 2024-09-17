@@ -181,25 +181,22 @@ float getVectorScaleToCurve(float radius, float2 vectorStart, float2 lookVector)
 float2 applySideviewTransform(float2 texcoord) {
     float2 texcoord_mins = float2(0.0, 0.0);
 
-    // display size is the inverse of the distance (not precisely, but close enough)
-    float effective_display_size = sideview_display_size / display_north_offset;
-
     if (sideview_position == 2 || sideview_position == 3) {
         // bottom
-        texcoord_mins.y = 1.0 - effective_display_size;
+        texcoord_mins.y = 1.0 - sideview_display_size;
     }
 
     if (sideview_position == 1 || sideview_position == 3) {
         // right
-        texcoord_mins.x = 1.0 - effective_display_size;
+        texcoord_mins.x = 1.0 - sideview_display_size;
     }
 
     if (sideview_position == 4) {
         // center
-        texcoord_mins.x = texcoord_mins.y = (1.0 - effective_display_size) / 2.0;
+        texcoord_mins.x = texcoord_mins.y = (1.0 - sideview_display_size) / 2.0;
     }
 
-    return (texcoord - texcoord_mins) / effective_display_size;
+    return (texcoord - texcoord_mins) / sideview_display_size;
 }
 
 /**
@@ -296,6 +293,15 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
         looking_away = lens_look_vector.x < 0.0;
         
         float display_distance = display_north_offset - rotated_lens_vector.x;
+
+        // for sideview, we want the display size to reverse the effect of the distance so it's always "full screen" prior 
+        // to applying the sideview adjustment
+        float effective_display_size = display_size;
+        if (sideview_effect_enabled) {
+            effective_display_size = display_north_offset;
+            if (sideview_display_size > 1.0)  effective_display_size *= sideview_display_size;
+        }
+        
         float3 final_look_vector;
         if (!curved_display) {
             // flat display
@@ -317,7 +323,7 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
 
             // Step 2.e
             // the screen sizes scale with the circle, so to zoom, we just make the circle bigger
-            float radius = display_size;
+            float radius = effective_display_size;
 
             // position ourselves within the circle's radius based on desired display distance
             float2 vectorStart = float2(radius - display_distance, rotated_lens_vector.y);
@@ -347,14 +353,7 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
         // scale/zoom operations must always be done around the center
         float2 texcoord_center = float2(0.5, 0.5);
         texcoord -= texcoord_center;
-        float2 aspect_ratio_adjustment = src_dsp_ratio;
-        if (sideview_effect_enabled) {
-            // undo scaling caused by display distance, sideview will re-apply this
-            texcoord /= display_north_offset;
-        } else {
-            aspect_ratio_adjustment *= display_size;
-        }
-
+        float2 aspect_ratio_adjustment = src_dsp_ratio * effective_display_size;
         if (!curved_display) {
             // scale the coordinates from aspect ratio of display to the aspect ratio of the source texture
             texcoord /= aspect_ratio_adjustment;
