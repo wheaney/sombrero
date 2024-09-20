@@ -28,6 +28,8 @@
         return x % y;
     }
 
+    DECLARE_UNIFORM(float4, date, < source = "date"; >);
+    DECLARE_UNIFORM(float4, keepalive_date, < source = "keepalive_date"; defaultValue=float4(0, 0, 0, 0); >);
     DECLARE_UNIFORM(bool, sbs_mode_stretched, < source = "sbs_mode_stretched"; defaultValue=false; >);
 #else
     #define RESHADE 0
@@ -77,9 +79,7 @@ DECLARE_UNIFORM(float2, texcoord_x_limits, < source = "texcoord_x_limits"; defau
 DECLARE_UNIFORM(float2, texcoord_x_limits_r, < source = "texcoord_x_limits_r"; defaultValue=float2(0.0, 1.0); >);
 DECLARE_UNIFORM(bool, show_banner, < source = "show_banner"; defaultValue=false; >);
 DECLARE_UNIFORM(float, frametime, < source = "frametime"; >);
-DECLARE_UNIFORM(float, look_ahead_ms, < source = "look_ahead_ms"; defaultValue=0.0; >);
-DECLARE_UNIFORM(float4, date, < source = "date"; >);
-DECLARE_UNIFORM(float4, keepalive_date, < source = "keepalive_date"; defaultValue=float4(0, 0, 0, 0); >);
+DECLARE_UNIFORM(float, look_ahead_ms, < source = "look_ahead_ms"; defaultValue=-1.0; >);
 DECLARE_UNIFORM(bool, custom_banner_enabled, < source = "custom_banner_enabled"; defaultValue=false; >);
 DECLARE_UNIFORM(float2, trim_percent, < source = "trim_percent"; defaultValue=float2(0.0, 0.0); >);
 DECLARE_UNIFORM(bool, curved_display, < source = "curved_display"; defaultValue=false; >);
@@ -276,7 +276,7 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
 
         // look_ahead can be hardcoded by look_ahead_ms, otherwise calculate it based on the frametime
         float effective_look_ahead_ms = look_ahead_ms;
-        if (look_ahead_ms == 0.0) effective_look_ahead_ms = look_ahead_cfg.x + frametime * look_ahead_cfg.y;
+        if (look_ahead_ms == -1.0) effective_look_ahead_ms = look_ahead_cfg.x + frametime * look_ahead_cfg.y;
 
         // allows for the bottom and top of the screen to have different look-ahead values
         float look_ahead_scanline_adjust = texcoord.y * look_ahead_cfg.z;
@@ -416,6 +416,7 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
         bool is_keepalive_recent = isKeepaliveRecent(date, keepalive_date);
         bool vd_effect_enabled = virtual_display_enabled && is_keepalive_recent;
         bool sideview_effect_enabled = sideview_enabled && is_keepalive_recent;
+        bool any_effect_enabled = vd_effect_enabled || sideview_effect_enabled;
         float2 source_resolution = float2(ReShade::ScreenSize.x, ReShade::ScreenSize.y);
 
         // the rendering application may have stretched the image to fit the SBS screen, if so then the texture
@@ -425,7 +426,7 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
             source_resolution.x /= 2.0;
 
         float2 src_dsp_ratio = source_resolution / display_resolution;
-        bool banner_visible = all(imu_quat_data[0] == imu_reset_data) && all(imu_quat_data[1] == imu_reset_data);
+        bool banner_visible = any_effect_enabled && all(imu_quat_data[0] == imu_reset_data) && all(imu_quat_data[1] == imu_reset_data);
 
         PS_Sombrero(vd_effect_enabled, sideview_effect_enabled, src_dsp_ratio, banner_visible, texcoord, color);
     }
