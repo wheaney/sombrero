@@ -32,6 +32,10 @@
     DECLARE_UNIFORM(float4, keepalive_date, < source = "keepalive_date"; defaultValue=float4(0, 0, 0, 0); >);
     DECLARE_UNIFORM(bool, sbs_mode_stretched, < source = "sbs_mode_stretched"; defaultValue=false; >);
 #else
+    #ifdef GL_ES
+        precision mediump float;
+    #endif
+
     #define RESHADE 0
 
     #define float float
@@ -45,11 +49,13 @@
     #define uint2 uvec2
     #define uint3 uvec3
     #define uint4 uvec4
-
-    // functions to match HLSL/ReShade
     #define atan2 atan
 
-    #define SAMPLE_TEXTURE(name, coord) texture2D(name, coord)
+    #if __VERSION__ >= 130
+        #define SAMPLE_TEXTURE(name, coord) texture(name, coord)
+    #else
+        #define SAMPLE_TEXTURE(name, coord) texture2D(name, coord)
+    #endif
     #define DECLARE_UNIFORM(type, name, annotation) uniform type name
 
     uniform sampler2D screenTexture;
