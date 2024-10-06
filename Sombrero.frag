@@ -93,8 +93,8 @@ DECLARE_UNIFORM(bool, curved_display, < source = "curved_display"; defaultValue=
 // FOV defaults based on 46 degree diagonal
 DECLARE_UNIFORM(float, half_fov_z_rads, < source = "half_fov_z_rads"; defaultValue=0.1968; >);
 DECLARE_UNIFORM(float, half_fov_y_rads, < source = "half_fov_y_rads"; defaultValue=0.34987; >);
-DECLARE_UNIFORM(float2, fov_half_widths, < source = "fov_half_widths"; defaultValue=float2(0.34987, 0.1968); >);
-DECLARE_UNIFORM(float2, fov_widths, < source = "fov_widths"; defaultValue=float2(0.34987, 0.1968); >);
+DECLARE_UNIFORM(float2, fov_half_widths, < source = "fov_half_widths"; defaultValue=float2(0.36488117986, 0.19938069145); >);
+DECLARE_UNIFORM(float2, fov_widths, < source = "fov_widths"; defaultValue=float2(0.72976236, 0.398761383); >);
 
 uniform float4 imu_reset_data = float4(0.0, 0.0, 0.0, 1.0);
 uniform float look_ahead_ms_cap = 45.0;
