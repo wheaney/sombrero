@@ -95,6 +95,7 @@ DECLARE_UNIFORM(float, half_fov_z_rads, < source = "half_fov_z_rads"; defaultVal
 DECLARE_UNIFORM(float, half_fov_y_rads, < source = "half_fov_y_rads"; defaultValue=0.34987; >);
 DECLARE_UNIFORM(float2, fov_half_widths, < source = "fov_half_widths"; defaultValue=float2(0.36488117986, 0.19938069145); >);
 DECLARE_UNIFORM(float2, fov_widths, < source = "fov_widths"; defaultValue=float2(0.72976236, 0.398761383); >);
+DECLARE_UNIFORM(float4, texcoord_visible_area, < source = "texcoord_visible_area"; defaultValue=float4(0.0, 0.0, 1.0, 1.0); >);
 
 uniform float4 imu_reset_data = float4(0.0, 0.0, 0.0, 1.0);
 uniform float look_ahead_ms_cap = 45.0;
@@ -105,7 +106,7 @@ DECLARE_UNIFORM(bool, sideview_enabled, < source = "sideview_enabled"; defaultVa
 
 // 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right, 4 = center
 DECLARE_UNIFORM(float, sideview_position, < source = "sideview_position"; defaultValue=0.0; >);
-DECLARE_UNIFORM(float, sideview_display_size, < source = "sideview_display_size"; defaultValue=1.0f; >);
+DECLARE_UNIFORM(float, sideview_display_size, < source = "sideview_display_size"; defaultValue=1.0; >);
 // ======== END sideview uniforms ========
 
 DECLARE_UNIFORM(bool, sbs_enabled, < source = "sbs_enabled"; defaultValue=false; >);
@@ -168,36 +169,36 @@ bool isKeepaliveRecent(float4 currentDate, float4 keepAliveDate) {
  * A negative return value is a "looking away" result
  **/
 float getVectorScaleToCurve(float radius, float2 vectorStart, float2 lookVector) {
-    float a = pow(lookVector.x, 2) + pow(lookVector.y, 2);
-    float b = 2 * (lookVector.x * vectorStart.x + lookVector.y * vectorStart.y);
-    float c = pow(vectorStart.x, 2) + pow(vectorStart.y, 2) - pow(radius, 2);
+    float a = pow(lookVector.x, 2.0) + pow(lookVector.y, 2.0);
+    float b = 2.0 * (lookVector.x * vectorStart.x + lookVector.y * vectorStart.y);
+    float c = pow(vectorStart.x, 2.0) + pow(vectorStart.y, 2.0) - pow(radius, 2.0);
 
-    float discriminant = pow(b, 2) - 4 * a * c;
+    float discriminant = pow(b, 2.0) - 4.0 * a * c;
     if (discriminant < 0.0) return -1.0;
 
     float sqrtDiscriminant = sqrt(discriminant);
 
     // return positive or largest, if both positive
     return max(
-        (-b + sqrtDiscriminant) / (2 * a),
-        (-b - sqrtDiscriminant) / (2 * a)
+        (-b + sqrtDiscriminant) / (2.0 * a),
+        (-b - sqrtDiscriminant) / (2.0 * a)
     );
 }
 
 float2 applySideviewTransform(float2 texcoord) {
     float2 texcoord_mins = float2(0.0, 0.0);
 
-    if (sideview_position == 2 || sideview_position == 3) {
+    if (sideview_position == 2.0 || sideview_position == 3.0) {
         // bottom
         texcoord_mins.y = 1.0 - sideview_display_size;
     }
 
-    if (sideview_position == 1 || sideview_position == 3) {
+    if (sideview_position == 1.0 || sideview_position == 3.0) {
         // right
         texcoord_mins.x = 1.0 - sideview_display_size;
     }
 
-    if (sideview_position == 4) {
+    if (sideview_position == 4.0) {
         // center
         texcoord_mins.x = texcoord_mins.y = (1.0 - sideview_display_size) / 2.0;
     }
@@ -212,7 +213,10 @@ float2 applySideviewTransform(float2 texcoord) {
  *   a. Choose the x-limits and lens vector based on the current lens (left or right).
  *   b. Scale the texcoord's x coordinate so it treats its own half of the screen as a full-screen texcoord (e.g. for a right lens, the
  *      an x-coordinate of 0.6 takes up 20% of the right half of the screen, so we map it to a value of 0.2).
- * 2. If the screen is not static (i.e. virtual display is being rendered):
+ * 2. In the case where the screen texture contains more than one screen (i.e. multiple virtual displays), "zoom" into the visible area 
+ *    by scaling the texcoord to be relative to the visible area.
+ *   a. If the scaled texcoord falls outside the visible range, set the color to black and exit.
+ * 3. If the screen is not static (i.e. virtual display is being rendered):
  *   a. Map the texture coordinates to a vector. The vector starts at the pivot point in the middle of the wearer's head to the same 
  *      texture-coordinate point on a screen that's at a forward distance described by the north-offset. This is the "look vector."
  *      The look vector is technically two vectors tip-to-tail, but for simplicity we keep them as one until after rotation: 
@@ -229,16 +233,16 @@ float2 applySideviewTransform(float2 texcoord) {
  *   g. Map the final look vector back to texture coordinates.
  *   h. Apply aspect ratio scaling so the screen doesn't appear warped in cases where the source and destination aspect ratios differ, and 
  *      apply the display zoom requested by the user.
- * 3. If sideview is enabled, apply the requested sideview transform, which just scales and translates the texture coordinates.
- * 4. If the banner is being shown:
+ * 4. If sideview is enabled, apply the requested sideview transform, which just scales and translates the texture coordinates.
+ * 5. If the banner is being shown:
  *   a. Scale the full-screen texture coordinates to coordinates relative to the banner texture, then figure out if those texture 
  *      coordinates fall within the banner region.
  *   b. If so, sample the banner texture, this is our final color so we can exit.
- * 5. After we've applied all effects, we've got the final texture coordinates, but they're relative to a full-screen texture. Apply the 
+ * 6. After we've applied all effects, we've got the final texture coordinates, but they're relative to a full-screen texture. Apply the 
  *    x-limits to move the texcoords to the relevant area of the screen texture so it's ready for sampling (e.g. with an x-coordinate of 0.2, 
  *    for a split SBS image from the right lens we would want to be sampling 20% of the way into the right-half of the screen texture, so it 
  *    would map to 0.6 on the original screen texture).
- * 6. Inspect the final texture coordinates to ensure they fall within the sample-able bounds of the screen texture. If not, set the color 
+ * 7. Inspect the final texture coordinates to ensure they fall within the sample-able bounds of the screen texture. If not, set the color 
  *    to black, otherwise use the coordinates to sample the screen texture.
  */
 void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 src_dsp_ratio, bool banner_visible, float2 texcoord, out float4 color) {
@@ -250,7 +254,6 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
     // Step 1
     float2 effective_x_limits = texcoord_x_limits;
     float3 effective_lens_vector = lens_vector;
-
     if (sbs_enabled && (vd_effect_enabled || sideview_effect_enabled)) {
         // Step 1.a
         bool right_display = texcoord.x > 0.5;
@@ -260,18 +263,30 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
         }
 
         // Step 1.b
-        texcoord.x = (texcoord.x - (right_display ? 0.5 : 0.0)) * 2;
+        texcoord.x = (texcoord.x - (right_display ? 0.5 : 0.0)) * 2.0;
     }
 
     // Step 2
+    float2 texcoord_visible_widths = texcoord_visible_area.zw - texcoord_visible_area.xy;
+    texcoord = (texcoord - texcoord_visible_area.xy) / texcoord_visible_widths;
+    if (texcoord.x < 0.0 || 
+        texcoord.y < 0.0 || 
+        texcoord.x > 1.0 || 
+        texcoord.y > 1.0) {
+        // Step 2.a
+        color = float4(0, 0, 0, 1);
+        return;
+    }
+
+    // Step 3
     bool looking_away = false;
     if (vd_effect_enabled && !banner_visible) {
-        // Step 2.a
+        // Step 3.a
         float vec_y = -texcoord.x * fov_widths.x + fov_half_widths.x;
         float vec_z = -texcoord.y * fov_widths.y + fov_half_widths.y;
         float3 look_vector = float3(1.0, vec_y, vec_z);
 
-        // Step 2.b
+        // Step 3.b
         float3 rotated_vector_t0 = applyQuaternionToVector(imu_quat_data[0], look_vector);
         float3 rotated_vector_t1 = applyQuaternionToVector(imu_quat_data[1], look_vector);
         float3 rotated_lens_vector = applyQuaternionToVector(imu_quat_data[0], effective_lens_vector);
@@ -290,10 +305,10 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
         // use the 4th value of the look-ahead config to cap the look-ahead value
         float look_ahead_ms_capped = min(min(effective_look_ahead_ms, look_ahead_cfg.w), look_ahead_ms_cap) + look_ahead_scanline_adjust;
 
-        // Step 2.c
+        // Step 3.c
         float3 rotated_look_vector = applyLookAhead(rotated_vector_t0, velocity_t0, look_ahead_ms_capped);
 
-        // Step 2.d
+        // Step 3.d
         float3 lens_look_vector = rotated_look_vector - rotated_lens_vector;
 
         looking_away = lens_look_vector.x < 0.0;
@@ -312,22 +327,22 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
         if (!curved_display) {
             // flat display
 
-            // Step 2.e
+            // Step 3.e
             // divide all values by x to scale the magnitude so x is exactly 1, and multiply by the final display distance
             // so the vector is pointing at a coordinate on the screen
             lens_look_vector *= display_distance / lens_look_vector.x;
 
-            // Step 2.f
+            // Step 3.f
             final_look_vector = lens_look_vector + rotated_lens_vector;
 
-            // Step 2.g for x-coord
+            // Step 3.g for x-coord
             // deconstruct the rotated and scaled vector back to a texcoord (just inverse operations of the first conversion
             // above)
             texcoord.x = (fov_half_widths.x - final_look_vector.y) / fov_widths.x;
         } else {
             // curved display
 
-            // Step 2.e
+            // Step 3.e
             // the screen sizes scale with the circle, so to zoom, we just make the circle bigger
             float radius = effective_display_size;
 
@@ -339,23 +354,23 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
             if (scale <= 0.0) looking_away = true;
             lens_look_vector *= scale;
 
-            // Step 2.f
+            // Step 3.f
             final_look_vector = lens_look_vector + float3(vectorStart.x, vectorStart.y, rotated_lens_vector.z);
 
-            // Step 2.g for x-coord
+            // Step 3.g for x-coord
             // we know exactly how many radians of the circle is covered by a single display's horizontal FOV,
             // so texcoord.x is just converting our vector.xy to radians and figuring out the percentage of the total 
             // FOV of all virtual displays
-            float fov_y = half_fov_y_rads * 2 * src_dsp_ratio.x;
-            float final_look_vector_y_rads = (fov_y / 2) - atan2(final_look_vector.y, final_look_vector.x);
+            float fov_y = half_fov_y_rads * 2.0 * src_dsp_ratio.x;
+            float final_look_vector_y_rads = (fov_y / 2.0) - atan2(final_look_vector.y, final_look_vector.x);
             texcoord.x = final_look_vector_y_rads / fov_y;
         }
 
-        // Step 2.g for y-coord
+        // Step 3.g for y-coord
         // screens are always flat in the vertical direction, so this is the same for curved and flat cases
         texcoord.y = (fov_half_widths.y - final_look_vector.z) / fov_widths.y;
 
-        // Step 2.h
+        // Step 3.h
         // scale/zoom operations must always be done around the center
         float2 texcoord_center = float2(0.5, 0.5);
         texcoord -= texcoord_center;
@@ -370,18 +385,18 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
         texcoord += texcoord_center;
     }
 
-    // Step 3
+    // Step 4
     if (sideview_effect_enabled) texcoord = applySideviewTransform(texcoord);
 
-    // Step 4
+    // Step 5
     if (banner_visible) {
-        // Step 4.a
+        // Step 5.a
         float2 banner_size = float2(800.0, 200.0) / display_resolution;
 
         // if the banner width is greater than the sreen width, scale it down
         banner_size /= max(banner_size.x, 1.1);
 
-        float2 banner_start = banner_position - banner_size / 2;
+        float2 banner_start = banner_position - banner_size / 2.0;
 
         // if the banner would extend too close or past the bottom edge of the screen, apply some padding
         banner_start.y = min(banner_start.y, 0.95 - banner_size.y);
@@ -389,7 +404,7 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
         // figure out the texture coordinates relative to the banner texture
         float2 banner_texcoord = (texcoord - banner_start) / banner_size;
         if (banner_texcoord.x >= 0.0 && banner_texcoord.x <= 1.0 && banner_texcoord.y >= 0.0 && banner_texcoord.y <= 1.0) {
-            // Step 4.b
+            // Step 5.b
             if (custom_banner_enabled) {
                 color = SAMPLE_TEXTURE(customBannerTexture, banner_texcoord);
             } else {
@@ -400,11 +415,11 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
         }
     }
 
-    // Step 5
+    // Step 6
     float texcoord_width = effective_x_limits.y - effective_x_limits.x;
     texcoord.x = texcoord.x * texcoord_width + effective_x_limits.x;
 
-    // Step 6
+    // Step 7
     if(looking_away || 
         texcoord.x < effective_x_limits.x + trim_percent.x || 
         texcoord.y < trim_percent.y || 
