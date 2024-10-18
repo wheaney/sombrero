@@ -5,7 +5,7 @@
     #define RESHADE 1
 
     #define SAMPLE_TEXTURE(name, coord) tex2D(name, coord)
-    #define DECLARE_UNIFORM(type, name, annotation) uniform type name annotation
+    #define DECLARE_UNIFORM(type, name, default_value) uniform type name < source = #name; defaultValue = default_value; >;
 
     texture BackBufferTex : COLOR;
     sampler screenTexture { Texture = BackBufferTex; };
@@ -28,9 +28,9 @@
         return x % y;
     }
 
-    DECLARE_UNIFORM(float4, date, < source = "date"; >);
-    DECLARE_UNIFORM(float4, keepalive_date, < source = "keepalive_date"; defaultValue=float4(0, 0, 0, 0); >);
-    DECLARE_UNIFORM(bool, sbs_mode_stretched, < source = "sbs_mode_stretched"; defaultValue=false; >);
+    DECLARE_UNIFORM(float4, date, float4(0, 0, 0, 0));
+    DECLARE_UNIFORM(float4, keepalive_date, float4(0, 0, 0, 0));
+    DECLARE_UNIFORM(bool, sbs_mode_stretched, false);
 #else
     #ifdef GL_ES
         precision mediump float;
@@ -56,7 +56,7 @@
     #else
         #define SAMPLE_TEXTURE(name, coord) texture2D(name, coord)
     #endif
-    #define DECLARE_UNIFORM(type, name, annotation) uniform type name
+    #define DECLARE_UNIFORM(type, name, default_value) uniform type name;
 
     uniform sampler2D screenTexture;
     uniform sampler2D calibratingTexture;
@@ -67,48 +67,47 @@ uniform float2 banner_position = float2(0.5, 0.9);
 uniform float day_in_seconds = 24 * 60 * 60;
 
 // ======== BEGIN virtual display uniforms ========
-DECLARE_UNIFORM(bool, virtual_display_enabled, < source = "virtual_display_enabled"; defaultValue=false; >);
-DECLARE_UNIFORM(float4x4, imu_quat_data, < source = "imu_quat_data"; defaultValue=float4x4(
+DECLARE_UNIFORM(bool, virtual_display_enabled, false);
+DECLARE_UNIFORM(float4x4, imu_quat_data, defaultValue=float4x4(
     0.0,    0.0,    0.0,    0.0, // quat snapshot at t0
     0.0,    0.0,    0.0,    0.0, // quat snapshot at t1 (for velocity 1)
     0.0,    0.0,    0.0,    0.0, // quat snapshot at t2 (for velocity 2, accel 1)
     0.0,    0.0,    0.0,    0.0  // timestamps for t0, t1, and t2, last value is unused
-); >);
-DECLARE_UNIFORM(float4, look_ahead_cfg, < source = "look_ahead_cfg"; defaultValue=float4(0.0, 0.0, 0.0, 0.0); >);
-DECLARE_UNIFORM(float2, display_resolution, < source = "display_res"; defaultValue=float2(1920, 1080); >);
-DECLARE_UNIFORM(float2, source_to_display_ratio, < source = "source_to_display_ratio"; defaultValue=float2(1.0, 1.0); >);
-DECLARE_UNIFORM(float, display_size, < source = "display_zoom"; defaultValue=1.0; >);
-DECLARE_UNIFORM(float, display_north_offset, < source = "display_north_offset"; defaultValue=1.0; >);
-DECLARE_UNIFORM(float3, lens_vector, < source = "lens_vector"; defaultValue=float3(0.05, 0.0, 0.0); >);
-DECLARE_UNIFORM(float3, lens_vector_r, < source = "lens_vector_r"; defaultValue=float3(0.05, 0.0, 0.0); >);
-DECLARE_UNIFORM(float2, texcoord_x_limits, < source = "texcoord_x_limits"; defaultValue=float2(0.0, 1.0); >);
-DECLARE_UNIFORM(float2, texcoord_x_limits_r, < source = "texcoord_x_limits_r"; defaultValue=float2(0.0, 1.0); >);
-DECLARE_UNIFORM(bool, show_banner, < source = "show_banner"; defaultValue=false; >);
-DECLARE_UNIFORM(float, frametime, < source = "frametime"; >);
-DECLARE_UNIFORM(float, look_ahead_ms, < source = "look_ahead_ms"; defaultValue=-1.0; >);
-DECLARE_UNIFORM(bool, custom_banner_enabled, < source = "custom_banner_enabled"; defaultValue=false; >);
-DECLARE_UNIFORM(float2, trim_percent, < source = "trim_percent"; defaultValue=float2(0.0, 0.0); >);
-DECLARE_UNIFORM(bool, curved_display, < source = "curved_display"; defaultValue=false; >);
+));
+DECLARE_UNIFORM(float4, look_ahead_cfg, float4(0.0, 0.0, 0.0, 0.0));
+DECLARE_UNIFORM(float2, display_resolution, float2(1920, 1080));
+DECLARE_UNIFORM(float2, source_to_display_ratio, float2(1.0, 1.0));
+DECLARE_UNIFORM(float, display_size, 1.0);
+DECLARE_UNIFORM(float, display_north_offset, 1.0);
+DECLARE_UNIFORM(float3, lens_vector, float3(0.05, 0.0, 0.0));
+DECLARE_UNIFORM(float3, lens_vector_r, float3(0.05, 0.0, 0.0));
+DECLARE_UNIFORM(float2, texcoord_x_limits, float2(0.0, 1.0));
+DECLARE_UNIFORM(float2, texcoord_x_limits_r, float2(0.0, 1.0));
+DECLARE_UNIFORM(bool, show_banner, false);
+DECLARE_UNIFORM(float, frametime, 17.0);
+DECLARE_UNIFORM(float, look_ahead_ms, -1.0);
+DECLARE_UNIFORM(bool, custom_banner_enabled, false);
+DECLARE_UNIFORM(float2, trim_percent, float2(0.0, 0.0));
+DECLARE_UNIFORM(bool, curved_display, false);
+DECLARE_UNIFORM(bool, sbs_enabled, false);
 
 // FOV defaults based on 46 degree diagonal
-DECLARE_UNIFORM(float, half_fov_z_rads, < source = "half_fov_z_rads"; defaultValue=0.1968; >);
-DECLARE_UNIFORM(float, half_fov_y_rads, < source = "half_fov_y_rads"; defaultValue=0.34987; >);
-DECLARE_UNIFORM(float2, fov_half_widths, < source = "fov_half_widths"; defaultValue=float2(0.36488117986, 0.19938069145); >);
-DECLARE_UNIFORM(float2, fov_widths, < source = "fov_widths"; defaultValue=float2(0.72976236, 0.398761383); >);
+DECLARE_UNIFORM(float, half_fov_z_rads, 0.1968);
+DECLARE_UNIFORM(float, half_fov_y_rads, 0.34987);
+DECLARE_UNIFORM(float2, fov_half_widths, float2(0.36488117986, 0.19938069145));
+DECLARE_UNIFORM(float2, fov_widths, float2(0.72976236, 0.398761383));
 
 uniform float4 imu_reset_data = float4(0.0, 0.0, 0.0, 1.0);
 uniform float look_ahead_ms_cap = 45.0;
 // ======== END virtual display uniforms ========
 
 // ======== BEGIN sideview uniforms ========
-DECLARE_UNIFORM(bool, sideview_enabled, < source = "sideview_enabled"; defaultValue=false; >);
+DECLARE_UNIFORM(bool, sideview_enabled, false);
 
 // 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right, 4 = center
-DECLARE_UNIFORM(float, sideview_position, < source = "sideview_position"; defaultValue=0.0; >);
-DECLARE_UNIFORM(float, sideview_display_size, < source = "sideview_display_size"; defaultValue=1.0f; >);
+DECLARE_UNIFORM(float, sideview_position, 0.0);
+DECLARE_UNIFORM(float, sideview_display_size, 1.0f);
 // ======== END sideview uniforms ========
-
-DECLARE_UNIFORM(bool, sbs_enabled, < source = "sbs_enabled"; defaultValue=false; >);
 
 float4 quatMul(float4 q1, float4 q2) {
     float3 u = float3(q1.x, q1.y, q1.z);
