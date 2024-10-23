@@ -68,7 +68,7 @@ uniform float day_in_seconds = 24 * 60 * 60;
 
 // ======== BEGIN virtual display uniforms ========
 DECLARE_UNIFORM(bool, virtual_display_enabled, false);
-DECLARE_UNIFORM(float4x4, imu_quat_data, defaultValue=float4x4(
+DECLARE_UNIFORM(float4x4, imu_quat_data, float4x4(
     0.0,    0.0,    0.0,    0.0, // quat snapshot at t0
     0.0,    0.0,    0.0,    0.0, // quat snapshot at t1 (for velocity 1)
     0.0,    0.0,    0.0,    0.0, // quat snapshot at t2 (for velocity 2, accel 1)
