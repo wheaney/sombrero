@@ -68,12 +68,13 @@ uniform float day_in_seconds = 24 * 60 * 60;
 
 // ======== BEGIN virtual display uniforms ========
 DECLARE_UNIFORM(bool, virtual_display_enabled, false);
-DECLARE_UNIFORM(float4x4, imu_quat_data, float4x4(
+DECLARE_UNIFORM(float4x4, pose_orientation, float4x4(
     0.0,    0.0,    0.0,    0.0, // quat snapshot at t0
     0.0,    0.0,    0.0,    0.0, // quat snapshot at t1 (for velocity 1)
     0.0,    0.0,    0.0,    0.0, // quat snapshot at t2 (for velocity 2, accel 1)
     0.0,    0.0,    0.0,    0.0  // timestamps for t0, t1, and t2, last value is unused
 ));
+DECLARE_UNIFORM(float3, pose_position, float3(0.0, 0.0, 0.0));
 DECLARE_UNIFORM(float4, look_ahead_cfg, float4(0.0, 0.0, 0.0, 0.0));
 DECLARE_UNIFORM(float2, display_resolution, float2(1920, 1080));
 DECLARE_UNIFORM(float2, source_to_display_ratio, float2(1.0, 1.0));
@@ -106,7 +107,6 @@ DECLARE_UNIFORM(bool, sideview_enabled, false);
 
 // 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right, 4 = center
 DECLARE_UNIFORM(float, sideview_position, 0.0);
-DECLARE_UNIFORM(float, sideview_display_size, 1.0f);
 // ======== END sideview uniforms ========
 
 float4 quatMul(float4 q1, float4 q2) {
@@ -188,20 +188,20 @@ float2 applySideviewTransform(float2 texcoord) {
 
     if (sideview_position == 2 || sideview_position == 3) {
         // bottom
-        texcoord_mins.y = 1.0 - sideview_display_size;
+        texcoord_mins.y = 1.0 - display_size;
     }
 
     if (sideview_position == 1 || sideview_position == 3) {
         // right
-        texcoord_mins.x = 1.0 - sideview_display_size;
+        texcoord_mins.x = 1.0 - display_size;
     }
 
     if (sideview_position == 4) {
         // center
-        texcoord_mins.x = texcoord_mins.y = (1.0 - sideview_display_size) / 2.0;
+        texcoord_mins.x = texcoord_mins.y = (1.0 - display_size) / 2.0;
     }
 
-    return (texcoord - texcoord_mins) / sideview_display_size;
+    return (texcoord - texcoord_mins) / display_size;
 }
 
 /**
@@ -271,12 +271,13 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
         float3 look_vector = float3(1.0, vec_y, vec_z);
 
         // Step 2.b
-        float3 rotated_vector_t0 = applyQuaternionToVector(imu_quat_data[0], look_vector);
-        float3 rotated_vector_t1 = applyQuaternionToVector(imu_quat_data[1], look_vector);
-        float3 rotated_lens_vector = applyQuaternionToVector(imu_quat_data[0], effective_lens_vector);
+        float3 rotated_vector_t0 = applyQuaternionToVector(pose_orientation[0], look_vector);
+        float3 rotated_vector_t1 = applyQuaternionToVector(pose_orientation[1], look_vector);
+        float3 rotated_lens_vector = applyQuaternionToVector(pose_orientation[0], effective_lens_vector);
+        float3 final_lens_position = pose_position + rotated_lens_vector;
 
         // compute the velocity (units/ms) as change in the rotation snapshots
-        float delta_time_t0 = imu_quat_data[3].x - imu_quat_data[3].y;
+        float delta_time_t0 = pose_orientation[3].x - pose_orientation[3].y;
         float3 velocity_t0 = rateOfChange(rotated_vector_t0, rotated_vector_t1, delta_time_t0);
 
         // look_ahead can be hardcoded by look_ahead_ms, otherwise calculate it based on the frametime
@@ -293,18 +294,18 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
         float3 rotated_look_vector = applyLookAhead(rotated_vector_t0, velocity_t0, look_ahead_ms_capped);
 
         // Step 2.d
-        float3 lens_look_vector = rotated_look_vector - rotated_lens_vector;
+        float3 lens_look_vector = rotated_look_vector - final_lens_position;
 
         looking_away = lens_look_vector.x < 0.0;
         
-        float display_distance = display_north_offset - rotated_lens_vector.x;
+        float display_distance = display_north_offset - final_lens_position.x;
 
         // for sideview, we want the display size to reverse the effect of the distance so it's always "full screen" prior 
         // to applying the sideview adjustment
         float effective_display_size = display_size;
         if (sideview_effect_enabled) {
             effective_display_size = display_north_offset;
-            if (sideview_display_size > 1.0)  effective_display_size *= sideview_display_size;
+            if (display_size > 1.0)  effective_display_size *= display_size;
         }
         
         float3 final_look_vector;
@@ -317,7 +318,7 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
             lens_look_vector *= display_distance / lens_look_vector.x;
 
             // Step 2.f
-            final_look_vector = lens_look_vector + rotated_lens_vector;
+            final_look_vector = lens_look_vector + final_lens_position;
 
             // Step 2.g for x-coord
             // deconstruct the rotated and scaled vector back to a texcoord (just inverse operations of the first conversion
@@ -331,7 +332,7 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
             float radius = effective_display_size;
 
             // position ourselves within the circle's radius based on desired display distance
-            float2 vectorStart = float2(radius - display_distance, rotated_lens_vector.y);
+            float2 vectorStart = float2(radius - display_distance, final_lens_position.y);
 
             // scale the vector to the length needed to reach the curved display, then add the lens offsets back on
             float scale = getVectorScaleToCurve(radius, vectorStart, lens_look_vector.xy);
@@ -339,7 +340,7 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
             lens_look_vector *= scale;
 
             // Step 2.f
-            final_look_vector = lens_look_vector + float3(vectorStart.x, vectorStart.y, rotated_lens_vector.z);
+            final_look_vector = lens_look_vector + float3(vectorStart.x, vectorStart.y, final_lens_position.z);
 
             // Step 2.g for x-coord
             // we know exactly how many radians of the circle is covered by a single display's horizontal FOV,
@@ -431,7 +432,7 @@ void PS_Sombrero(bool vd_effect_enabled, bool sideview_effect_enabled, float2 sr
             source_resolution.x /= 2.0;
 
         float2 src_dsp_ratio = source_resolution / display_resolution;
-        bool banner_visible = any_effect_enabled && all(imu_quat_data[0] == imu_reset_data) && all(imu_quat_data[1] == imu_reset_data);
+        bool banner_visible = any_effect_enabled && all(pose_orientation[0] == imu_reset_data) && all(pose_orientation[1] == imu_reset_data);
 
         PS_Sombrero(vd_effect_enabled, sideview_effect_enabled, src_dsp_ratio, banner_visible, texcoord, color);
     }
