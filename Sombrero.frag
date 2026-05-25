@@ -105,7 +105,7 @@ uniform float look_ahead_ms_cap = 45.0;
 // ======== BEGIN sideview uniforms ========
 DECLARE_UNIFORM(bool, sideview_enabled, false);
 
-// 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right, 4 = center
+// 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right, 4 = center, 5 = center-left, 6 = center-top, 7 = center-right, 8 = center-bottom
 DECLARE_UNIFORM(float, sideview_position, 0.0);
 // ======== END sideview uniforms ========
 
@@ -186,12 +186,12 @@ float getVectorScaleToCurve(float radius, float2 vectorStart, float2 lookVector)
 float2 applySideviewTransform(float2 texcoord) {
     float2 texcoord_mins = float2(0.0, 0.0);
 
-    if (sideview_position == 2 || sideview_position == 3) {
+    if (sideview_position == 2 || sideview_position == 3 || sideview_position == 8) {
         // bottom
         texcoord_mins.y = 1.0 - display_size;
     }
 
-    if (sideview_position == 1 || sideview_position == 3) {
+    if (sideview_position == 1 || sideview_position == 3 || sideview_position == 7) {
         // right
         texcoord_mins.x = 1.0 - display_size;
     }
@@ -199,6 +199,16 @@ float2 applySideviewTransform(float2 texcoord) {
     if (sideview_position == 4) {
         // center
         texcoord_mins.x = texcoord_mins.y = (1.0 - display_size) / 2.0;
+    }
+
+    if (sideview_position == 5 || sideview_position == 7) {
+        // vertical center
+        texcoord_mins.y = (1.0 - display_size) / 2.0;
+    }
+
+    if (sideview_position == 6 || sideview_position == 8) {
+        // horizontal center
+        texcoord_mins.x = (1.0 - display_size) / 2.0;
     }
 
     return (texcoord - texcoord_mins) / display_size;
