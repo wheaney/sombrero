@@ -105,7 +105,7 @@ uniform float look_ahead_ms_cap = 45.0;
 // ======== BEGIN sideview uniforms ========
 DECLARE_UNIFORM(bool, sideview_enabled, false);
 
-// 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right, 4 = center, 5 = center-left, 6 = center-top, 7 = center-right, 8 = center-bottom
+// 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right, 4 = middle-center, 5 = middle-left, 6 = top-center, 7 = middle-right, 8 = bottom-center
 DECLARE_UNIFORM(float, sideview_position, 0.0);
 // ======== END sideview uniforms ========
 
@@ -202,7 +202,7 @@ float2 applySideviewTransform(float2 texcoord) {
     }
 
     if (sideview_position == 5 || sideview_position == 7) {
-        // vertical center
+        // middle
         texcoord_mins.y = (1.0 - display_size) / 2.0;
     }
 
